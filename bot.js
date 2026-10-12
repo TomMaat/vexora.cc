@@ -23,8 +23,7 @@ const PORT = process.env.PORT || 3000;
 const REVIEW_CHANNEL_ID = '1559313542509887569';
 const REQUIRED_ROLE_ID = '1556357822998913094';
 const PRODUCT = 'Vexora External + Bypass';
-const FRAME_MS = 400;      // tijd per letter (hoger = langzamer)
-const HOLD_MS = 2000;      // tijd dat de volledige tekst blijft staan
+const STATUS_INTERVAL = 8000; // 8 seconden
 // =========================
 
 http.createServer((req, res) => {
@@ -134,54 +133,39 @@ async function volgendNummer(channel) {
   }
 }
 
-// ===== Status fade animatie =====
+// ===== Status afwisselen tussen Reviews en Members =====
+let statusToggle = false;
 let cachedCounter = 0;
 
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
+async function updateStatus() {
+  try {
+    const guild = await client.guilds.fetch(GUILD_ID);
 
-async function fadeIn(tekst) {
-  for (let i = 1; i <= tekst.length; i++) {
-    client.user.setActivity(tekst.slice(0, i), { type: 3 });
-    await sleep(FRAME_MS);
-  }
-}
-
-async function fadeOut(tekst) {
-  for (let i = tekst.length - 1; i >= 1; i--) {
-    client.user.setActivity(tekst.slice(0, i), { type: 3 });
-    await sleep(FRAME_MS);
-  }
-  client.user.setActivity('\u200b', { type: 3 });
-}
-
-async function toonMetFade(tekst) {
-  await fadeIn(tekst);
-  await sleep(HOLD_MS);
-  await fadeOut(tekst);
-  await sleep(500);
-}
-
-async function statusLoop() {
-  while (true) {
-    try {
-      const guild = await client.guilds.fetch(GUILD_ID);
-
-      await toonMetFade(`${cachedCounter} Reviews`);
-      await toonMetFade(`${guild.memberCount} Members`);
-
-      // Counter verversen
-      try {
-        cachedCounter = await leesCounter();
-      } catch (e) {
-        console.error('Counter refresh faalde:', e.message);
-      }
-    } catch (e) {
-      console.error('Status loop fout:', e.message);
-      await sleep(5000);
+    if (statusToggle) {
+      client.user.setActivity(`${guild.memberCount} Members`, { type: 3 });
+    } else {
+      client.user.setActivity(`${cachedCounter} Reviews`, { type: 3 });
     }
+
+    statusToggle = !statusToggle;
+  } catch (e) {
+    console.error('Kon status niet updaten:', e.message);
   }
+}
+
+async function refreshCounterCache() {
+  try {
+    cachedCounter = await leesCounter();
+  } catch (e) {
+    console.error('Kon counter niet cachen:', e.message);
+  }
+}
+
+function startStatusInterval() {
+  refreshCounterCache();
+  updateStatus();
+  setInterval(refreshCounterCache, 60000); // counter elke minuut verversen
+  setInterval(updateStatus, STATUS_INTERVAL);
 }
 // ==========================================================
 
@@ -306,14 +290,7 @@ client.on('interactionCreate', async (i) => {
 
 client.once('ready', async () => {
   console.log(`online als ${client.user.tag}`);
-
-  try {
-    cachedCounter = await leesCounter();
-  } catch (e) {
-    console.error('Kon counter niet laden:', e.message);
-  }
-
-  statusLoop();
+  startStatusInterval();
 });
 
 client.login(TOKEN);
