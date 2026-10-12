@@ -42,6 +42,11 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 (async () => {
   try {
+    console.log('oude commands wissen...');
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
+    await new Promise(r => setTimeout(r, 2000));
+
+    console.log('nieuwe commands registreren...');
     await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
     console.log('commands geladen');
   } catch (e) {
