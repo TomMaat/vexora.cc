@@ -206,13 +206,22 @@ client.on('interactionCreate', async (i) => {
 
       await i.deferUpdate();
 
+      // Bepaal nummer (Gist eerst, kanaal als fallback)
       let nummer;
       try {
         nummer = await volgendNummer(i.channel);
-        await schrijfCounter(nummer);
       } catch (e) {
-        console.error('Kon nummer niet bepalen/opslaan:', e);
+        console.error('Kon nummer niet bepalen:', e);
         nummer = '?';
+      }
+
+      // Sla nummer op (ook als fallback gebruikt is)
+      if (nummer !== '?') {
+        try {
+          await schrijfCounter(nummer);
+        } catch (e) {
+          console.error('Kon nummer niet opslaan:', e.message);
+        }
       }
 
       const embed = new EmbedBuilder()
