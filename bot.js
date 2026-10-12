@@ -35,7 +35,7 @@ const commands = [{
   name: 'review',
   description: 'Schrijf een review voor Vexora External + Bypass',
   options: [
-    { name: 'extra', description: 'Extra opmerking', type: 3, required: false },
+    { name: 'extra', description: 'Extra opmerking', type: 3, required: true },
   ],
 }];
 
