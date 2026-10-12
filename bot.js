@@ -30,7 +30,13 @@ http.createServer((req, res) => {
   res.end('ok');
 }).listen(PORT);
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds],
+  presence: {
+    status: 'online',
+    activities: [{ name: '0 Reviews', type: 3 }],
+  },
+});
 const reviews = new Map();
 
 const commands = [{
@@ -123,6 +129,15 @@ async function volgendNummer(channel) {
     console.error('Gist faalde, val terug op kanaal scan:', e.message);
     const hoogste = await scanKanaal(channel);
     return hoogste + 1;
+  }
+}
+
+async function updateStatus() {
+  try {
+    const aantal = await leesCounter();
+    client.user.setActivity(`${aantal} Reviews`, { type: 3 });
+  } catch (e) {
+    console.error('Kon status niet updaten:', e.message);
   }
 }
 // ==========================================================
@@ -222,6 +237,7 @@ client.on('interactionCreate', async (i) => {
         } catch (e) {
           console.error('Kon nummer niet opslaan:', e.message);
         }
+        await updateStatus();
       }
 
       const embed = new EmbedBuilder()
@@ -238,7 +254,7 @@ client.on('interactionCreate', async (i) => {
           { name: 'Extra', value: review.extra }
         )
         .setThumbnail(LOGO)
-        .setFooter({ text: 'Review Bot', iconURL: client.user.displayAvatarURL() });
+        .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
 
       await i.editReply({ components: [] });
       await i.channel.send({ embeds: [embed] });
@@ -247,8 +263,9 @@ client.on('interactionCreate', async (i) => {
   }
 });
 
-client.once('ready', () => {
+client.once('ready', async () => {
   console.log(`online als ${client.user.tag}`);
+  await updateStatus();
 });
 
 client.login(TOKEN);
