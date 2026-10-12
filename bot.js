@@ -284,25 +284,6 @@ client.on('interactionCreate', async (i) => {
       await i.editReply({ components: [] });
       await i.channel.send({ embeds: [embed] });
       reviews.delete(i.user.id);
-
-      // DM naar gebruiker
-      try {
-        const dmEmbed = new EmbedBuilder()
-          .setTitle('Bedankt voor je review!')
-          .setDescription(
-            `Bedankt voor het plaatsen van **Review #${nummer}** voor **${PRODUCT}**.\n\n` +
-            `Jouw beoordeling: ${sterren(review.rating)} (${review.rating}/5)\n\n` +
-            `We stellen je feedback enorm op prijs!`
-          )
-          .setColor(0xffd700)
-          .setThumbnail(LOGO)
-          .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
-          .setTimestamp();
-
-        await i.user.send({ embeds: [dmEmbed] });
-      } catch (e) {
-        console.error('Kon DM niet sturen naar', i.user.tag, ':', e.message);
-      }
     }
   }
 });
