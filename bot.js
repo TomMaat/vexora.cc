@@ -23,6 +23,7 @@ const PORT = process.env.PORT || 3000;
 const REVIEW_CHANNEL_ID = '1559313542509887569';
 const REQUIRED_ROLE_ID = '1556357822998913094';
 const PRODUCT = 'Vexora External + Bypass';
+const STATUS_INTERVAL = 5000; // 5 seconden
 // =========================
 
 http.createServer((req, res) => {
@@ -132,13 +133,39 @@ async function volgendNummer(channel) {
   }
 }
 
+// ===== Status afwisselen tussen Reviews en Members =====
+let statusToggle = false;
+let cachedCounter = 0;
+
 async function updateStatus() {
   try {
-    const aantal = await leesCounter();
-    client.user.setActivity(`${aantal} Reviews`, { type: 3 });
+    const guild = await client.guilds.fetch(GUILD_ID);
+
+    if (statusToggle) {
+      client.user.setActivity(`${guild.memberCount} Members`, { type: 3 });
+    } else {
+      client.user.setActivity(`${cachedCounter} Reviews`, { type: 3 });
+    }
+
+    statusToggle = !statusToggle;
   } catch (e) {
     console.error('Kon status niet updaten:', e.message);
   }
+}
+
+async function refreshCounterCache() {
+  try {
+    cachedCounter = await leesCounter();
+  } catch (e) {
+    console.error('Kon counter niet cachen:', e.message);
+  }
+}
+
+function startStatusInterval() {
+  refreshCounterCache();
+  updateStatus();
+  setInterval(refreshCounterCache, 60000); // counter elke minuut verversen
+  setInterval(updateStatus, STATUS_INTERVAL);
 }
 // ==========================================================
 
@@ -221,7 +248,6 @@ client.on('interactionCreate', async (i) => {
 
       await i.deferUpdate();
 
-      // Bepaal nummer (Gist eerst, kanaal als fallback)
       let nummer;
       try {
         nummer = await volgendNummer(i.channel);
@@ -230,14 +256,13 @@ client.on('interactionCreate', async (i) => {
         nummer = '?';
       }
 
-      // Sla nummer op (ook als fallback gebruikt is)
       if (nummer !== '?') {
         try {
           await schrijfCounter(nummer);
+          cachedCounter = nummer;
         } catch (e) {
           console.error('Kon nummer niet opslaan:', e.message);
         }
-        await updateStatus();
       }
 
       const embed = new EmbedBuilder()
@@ -265,7 +290,7 @@ client.on('interactionCreate', async (i) => {
 
 client.once('ready', async () => {
   console.log(`online als ${client.user.tag}`);
-  await updateStatus();
+  startStatusInterval();
 });
 
 client.login(TOKEN);
