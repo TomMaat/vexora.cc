@@ -14,6 +14,8 @@ const http = require('http');
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
+const GIST_ID = process.env.GIST_ID;
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const LOGO = 'https://cdn.discordapp.com/attachments/1557498332262301716/1558123583371481139/Vexora.png?ex=6ace3faa&is=6accee2a&hm=c27628f8d9c71dab36f1041308bc32a630c03fadc49bf418913598bd4944c7ea&';
 const PORT = process.env.PORT || 3000;
 
@@ -35,7 +37,7 @@ const commands = [{
   name: 'review',
   description: 'Schrijf een review voor Vexora External + Bypass',
   options: [
-    { name: 'extra', description: 'Extra opmerking', type: 3, required: true },
+    { name: 'extra', description: 'Vertel kort je ervaring', type: 3, required: true },
   ],
 }];
 
@@ -56,6 +58,74 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
     console.error(e);
   }
 })();
+
+// ===== Review nummer: Gist eerst, kanaal als fallback =====
+async function leesCounter() {
+  const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+    headers: {
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Accept: 'application/vnd.github+json',
+    },
+  });
+  if (!res.ok) throw new Error(`Gist read faalde: ${res.status}`);
+  const data = await res.json();
+  return JSON.parse(data.files['reviews.json'].content).counter || 0;
+}
+
+async function schrijfCounter(n) {
+  const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      files: { 'reviews.json': { content: JSON.stringify({ counter: n }) } },
+    }),
+  });
+  if (!res.ok) throw new Error(`Gist write faalde: ${res.status}`);
+}
+
+async function scanKanaal(channel) {
+  let hoogste = 0;
+  let laatsteId = null;
+  let doorzoeken = true;
+
+  while (doorzoeken) {
+    const opties = { limit: 100 };
+    if (laatsteId) opties.before = laatsteId;
+
+    const berichten = await channel.messages.fetch(opties);
+    if (berichten.size === 0) break;
+
+    for (const msg of berichten.values()) {
+      for (const embed of msg.embeds) {
+        if (embed.title && embed.title.startsWith('Review #')) {
+          const n = parseInt(embed.title.replace('Review #', ''));
+          if (!isNaN(n) && n > hoogste) hoogste = n;
+        }
+      }
+    }
+
+    laatsteId = berichten.last().id;
+    if (berichten.size < 100) doorzoeken = false;
+  }
+
+  return hoogste;
+}
+
+async function volgendNummer(channel) {
+  try {
+    const c = await leesCounter();
+    return c + 1;
+  } catch (e) {
+    console.error('Gist faalde, val terug op kanaal scan:', e.message);
+    const hoogste = await scanKanaal(channel);
+    return hoogste + 1;
+  }
+}
+// ==========================================================
 
 function sterren(n) {
   return '⭐'.repeat(n) + '☆'.repeat(5 - n);
@@ -100,7 +170,7 @@ client.on('interactionCreate', async (i) => {
       });
     }
 
-    const extra = i.options.getString('extra') || '';
+    const extra = i.options.getString('extra');
 
     reviews.set(i.user.id, { product: PRODUCT, extra, rating: null });
 
@@ -134,8 +204,19 @@ client.on('interactionCreate', async (i) => {
         return i.reply({ content: 'Kies eerst een aantal sterren.', ephemeral: true });
       }
 
+      await i.deferUpdate();
+
+      let nummer;
+      try {
+        nummer = await volgendNummer(i.channel);
+        await schrijfCounter(nummer);
+      } catch (e) {
+        console.error('Kon nummer niet bepalen/opslaan:', e);
+        nummer = '?';
+      }
+
       const embed = new EmbedBuilder()
-        .setTitle('Nieuwe Review')
+        .setTitle(`Review #${nummer}`)
         .setColor(0xffd700)
         .setTimestamp()
         .setAuthor({
@@ -145,12 +226,12 @@ client.on('interactionCreate', async (i) => {
         .addFields(
           { name: 'Product', value: review.product },
           { name: 'Beoordeling', value: `${sterren(review.rating)} (${review.rating}/5)` },
-          { name: 'Extra', value: review.extra || 'Geen' }
+          { name: 'Extra', value: review.extra }
         )
         .setThumbnail(LOGO)
         .setFooter({ text: 'Review Bot', iconURL: client.user.displayAvatarURL() });
 
-      await i.update({ components: [] });
+      await i.editReply({ components: [] });
       await i.channel.send({ embeds: [embed] });
       reviews.delete(i.user.id);
     }
