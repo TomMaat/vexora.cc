@@ -13,6 +13,7 @@ const http = require('http');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
 const LOGO = 'https://cdn.discordapp.com/attachments/1557498332262301716/1558123583371481139/Vexora.png?ex=6ace3faa&is=6accee2a&hm=c27628f8d9c71dab36f1041308bc32a630c03fadc49bf418913598bd4944c7ea&';
 const PORT = process.env.PORT || 3000;
 
@@ -42,12 +43,14 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 (async () => {
   try {
-    console.log('oude commands wissen...');
+    console.log('global commands wissen...');
     await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
-    await new Promise(r => setTimeout(r, 2000));
 
-    console.log('nieuwe commands registreren...');
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+    console.log('guild commands registreren...');
+    await rest.put(
+      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+      { body: commands }
+    );
     console.log('commands geladen');
   } catch (e) {
     console.error(e);
