@@ -8,18 +8,18 @@ const {
   ButtonStyle,
   REST,
   Routes,
-  PermissionFlagsBits,
 } = require('discord.js');
 const http = require('http');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-const LOGO = 'https://cdn.discordapp.com/attachments/1557498332262301716/1558123583371481139/Vexora.png?ex=6ace3faa&is=6accee2a&hm=c27628f8d9c71dab36f1041308bc32a630c03fadc49bf418913598bd4944c7ea&'; // ← directe link hier
+const LOGO = 'https://cdn.discordapp.com/attachments/1557498332262301716/1558123583371481139/Vexora.png?ex=6ace3faa&is=6accee2a&hm=c27628f8d9c71dab36f1041308bc32a630c03fadc49bf418913598bd4944c7ea&';
 const PORT = process.env.PORT || 3000;
 
 // ===== Instellingen =====
-const REVIEW_CHANNEL_ID = '1559313542509887569'; // ← kanaal ID waar /review werkt
-const REQUIRED_ROLE_ID = '1556357822998913094';  // ← rol ID die je nodig hebt
+const REVIEW_CHANNEL_ID = '1559313542509887569';
+const REQUIRED_ROLE_ID = '1556357822998913094';
+const PRODUCT = 'Vexora External + Bypass';
 // =========================
 
 http.createServer((req, res) => {
@@ -32,12 +32,10 @@ const reviews = new Map();
 
 const commands = [{
   name: 'review',
-  description: 'Schrijf een review',
+  description: 'Schrijf een review voor Vexora External + Bypass',
   options: [
-    { name: 'product', description: 'Welk product?', type: 3, required: true },
     { name: 'extra', description: 'Extra opmerking', type: 3, required: false },
   ],
-  default_member_permissions: null,
 }];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -80,7 +78,6 @@ function submitRow() {
 
 client.on('interactionCreate', async (i) => {
   if (i.isChatInputCommand() && i.commandName === 'review') {
-    // Check kanaal
     if (i.channelId !== REVIEW_CHANNEL_ID) {
       return i.reply({
         content: `Je kunt alleen in <#${REVIEW_CHANNEL_ID}> een review plaatsen.`,
@@ -88,7 +85,6 @@ client.on('interactionCreate', async (i) => {
       });
     }
 
-    // Check rol
     if (!i.member.roles.cache.has(REQUIRED_ROLE_ID)) {
       return i.reply({
         content: `Je hebt de <@&${REQUIRED_ROLE_ID}> rol nodig om een review te plaatsen.`,
@@ -96,14 +92,13 @@ client.on('interactionCreate', async (i) => {
       });
     }
 
-    const product = i.options.getString('product');
     const extra = i.options.getString('extra') || '';
 
-    reviews.set(i.user.id, { product, extra, rating: null });
+    reviews.set(i.user.id, { product: PRODUCT, extra, rating: null });
 
     const embed = new EmbedBuilder()
       .setTitle('Review aanmaken')
-      .setDescription(`**Product:** ${product}\n\nKies een aantal sterren.`)
+      .setDescription(`**Product:** ${PRODUCT}\n\nKies een aantal sterren.`)
       .setColor(0x5865f2)
       .setThumbnail(LOGO);
 
