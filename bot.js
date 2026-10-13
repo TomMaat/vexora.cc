@@ -454,7 +454,7 @@ function startOverzichtInterval() {
   setInterval(updateOverzicht, 60000);
 }
 
-// ===== Kanaal schoonmaken (alle bot-berichten weg) =====
+// ===== Kanaal schoonmaken =====
 async function clearBotMessages(channel) {
   let laatsteId = null;
   let doorzoeken = true;
@@ -567,8 +567,7 @@ async function setupPricing() {
           inline: false,
         }
       )
-      .setImage(LOGO)
-      .setFooter({ text: 'Vexora.cc • We dont sell to players who dont understand bypassing', iconURL: LOGO })
+      .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
       .setTimestamp();
 
     await channel.send({ embeds: [embed] });
