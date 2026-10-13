@@ -37,9 +37,9 @@ const PRODUCT = 'Vexora External + Bypass';
 const STATUS_INTERVAL = 8000;
 
 const TICKET_CATEGORIES = {
-  support: { naam: 'Support', categoryId: '1559570734664122488', emoji: '🆘', kleur: 0x3498db },
-  purchase: { naam: 'Purchase', categoryId: '1559570790398042133', emoji: '🛒', kleur: 0x00ff88 },
-  bug: { naam: 'Bug', categoryId: '1559570848279429290', emoji: '🐛', kleur: 0xff4444 },
+  support: { naam: 'Support', prefix: 'support', categoryId: '1559570734664122488', emoji: '🆘', kleur: 0x3498db },
+  purchase: { naam: 'Purchase', prefix: 'purchase', categoryId: '1559570790398042133', emoji: '🛒', kleur: 0x00ff88 },
+  bug: { naam: 'Bug', prefix: 'bug', categoryId: '1559570848279429290', emoji: '🐛', kleur: 0xff4444 },
 };
 // =========================
 
@@ -500,21 +500,16 @@ async function setupVerify() {
     await clearBotMessages(channel);
 
     const embed = new EmbedBuilder()
-      .setTitle('Verificatie')
-      .setColor(0x00ff88)
-      .setDescription(
-        `Welkom bij **Vexora.cc**!\n\n` +
-        `Klik op de knop hieronder om je te verifiëren en toegang te krijgen tot de server.\n\n` +
-        `Door te verifiëren ga je akkoord met onze regels.`
-      )
+      .setTitle('Verify')
+      .setColor(0x5865f2)
+      .setDescription('Klik hieronder om toegang te krijgen tot de server.')
       .setThumbnail(LOGO)
-      .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
-      .setTimestamp();
+      .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('verify_button')
-        .setLabel('Verifiëren')
+        .setLabel('Verify')
         .setEmoji('✅')
         .setStyle(ButtonStyle.Success)
     );
@@ -579,8 +574,7 @@ async function setupPricing() {
           inline: false,
         }
       )
-      .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
-      .setTimestamp();
+      .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
 
     await channel.send({ embeds: [embed] });
     console.log('Prijslijst geplaatst');
@@ -601,40 +595,19 @@ async function setupTicketPanel() {
     await clearBotMessages(channel);
 
     const embed = new EmbedBuilder()
-      .setTitle('Support Tickets')
+      .setTitle('Tickets')
       .setColor(0x5865f2)
+      .setDescription('Kies een categorie om een ticket te openen.')
       .setThumbnail(LOGO)
-      .setDescription(
-        '> Kies hieronder een categorie om een ticket aan te maken.\n\n' +
-        '🆘 **Support** — Hulp nodig? Open een support ticket.\n' +
-        '🛒 **Purchase** — Vragen over een aankoop of licentie.\n' +
-        '🐛 **Bug** — Een bug of probleem gevonden? Meld het hier.'
-      )
-      .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
-      .setTimestamp();
+      .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
 
     const menu = new StringSelectMenuBuilder()
       .setCustomId('ticket_category_select')
-      .setPlaceholder('Kies een categorie...')
+      .setPlaceholder('Categorie...')
       .addOptions([
-        {
-          label: 'Support',
-          value: 'support',
-          description: 'Hulp nodig? Open een support ticket.',
-          emoji: '🆘',
-        },
-        {
-          label: 'Purchase',
-          value: 'purchase',
-          description: 'Vragen over een aankoop of licentie.',
-          emoji: '🛒',
-        },
-        {
-          label: 'Bug',
-          value: 'bug',
-          description: 'Een bug of probleem gevonden?',
-          emoji: '🐛',
-        },
+        { label: 'Support', value: 'support', emoji: '🆘' },
+        { label: 'Purchase', value: 'purchase', emoji: '🛒' },
+        { label: 'Bug', value: 'bug', emoji: '🐛' },
       ]);
 
     const row = new ActionRowBuilder().addComponents(menu);
@@ -950,7 +923,7 @@ client.on('interactionCreate', async (i) => {
         });
       }
 
-      const kanaalNaam = `${cat.emoji}-${i.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '');
+      const kanaalNaam = `${cat.prefix}-${i.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '');
 
       const permissionOverwrites = [
         {
@@ -991,24 +964,15 @@ client.on('interactionCreate', async (i) => {
         type: ChannelType.GuildText,
         parent: cat.categoryId,
         permissionOverwrites,
-        topic: `Ticket van ${i.user.tag} — Categorie: ${cat.naam}`,
+        topic: `Ticket van ${i.user.tag} — ${cat.naam}`,
       });
 
       await addTicket(ticketChannel.id, i.user.id, keuze);
 
       const embed = new EmbedBuilder()
-        .setTitle(`${cat.emoji} ${cat.naam} Ticket`)
+        .setTitle(cat.naam)
         .setColor(cat.kleur)
-        .setThumbnail(LOGO)
-        .setDescription(
-          `Hey <@${i.user.id}>, bedankt voor het openen van een ticket!\n\n` +
-          `Een staff lid zal zo snel mogelijk bij je zijn.\n` +
-          `Beschrijf je vraag of probleem zo duidelijk mogelijk.`
-        )
-        .addFields(
-          { name: 'Categorie', value: cat.naam, inline: true },
-          { name: 'Klant', value: `<@${i.user.id}>`, inline: true }
-        )
+        .setDescription(`<@${i.user.id}> — beschrijf hieronder je vraag.`)
         .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
         .setTimestamp();
 
