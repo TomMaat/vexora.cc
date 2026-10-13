@@ -513,7 +513,7 @@ client.on('interactionCreate', async (i) => {
             `Bedankt voor het kopen van **${plan === 'lifetime' ? 'Lifetime' : plan}** bij Vexora!\n\n` +
             `Hier is je key:\n\`\`\`${key}\`\`\`\n` +
             `Bewaar deze goed — je hebt hem nodig om het product te gebruiken.\n\n` +
-            `Wil je een review achterlaten? Gebruik \`/review\` in de server. Dat stellen we enorm op prijs! 💛`
+            `Wil je een review achterlaten? Gebruik \`/review\` in de server. Dat stellen we enorm op prijs! 💙`
           )
           .addFields(
             { name: 'Plan', value: plan === 'lifetime' ? 'Lifetime' : plan, inline: true },
