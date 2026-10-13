@@ -21,9 +21,11 @@ const PORT = process.env.PORT || 3000;
 
 // ===== Instellingen =====
 const REVIEW_CHANNEL_ID = '1559313542509887569';
-const REQUIRED_ROLE_ID = '1556357822998913094';
+const REQUIRED_ROLE_ID = '1556357822998913094';       // rol voor /review
+const PURCHASE_ROLE_ID = '1559485646991654922';       // rol die /purchase mag gebruiken
+const PURCHASE_LOG_CHANNEL_ID = '1559485972440293386'; // kanaal met overzicht
 const PRODUCT = 'Vexora External + Bypass';
-const STATUS_INTERVAL = 8000; // 8 seconden
+const STATUS_INTERVAL = 8000;
 // =========================
 
 http.createServer((req, res) => {
@@ -40,13 +42,69 @@ const client = new Client({
 });
 const reviews = new Map();
 
-const commands = [{
-  name: 'review',
-  description: 'Schrijf een review voor Vexora External + Bypass',
-  options: [
-    { name: 'extra', description: 'Vertel kort je ervaring', type: 3, required: true },
-  ],
-}];
+// ===== Plans =====
+const PLANS = {
+  '1 dag': 36 * 60 * 60 * 1000,      // 36 uur (1 dag + 12u)
+  '1 week': 8.5 * 24 * 60 * 60 * 1000, // 8.5 dagen (1 week + 12u)
+  '1 maand': 30.5 * 24 * 60 * 60 * 1000, // 30.5 dagen (1 maand + 12u)
+  'lifetime': null,                    // nooit verlopen
+};
+
+function planDuurMs(plan) {
+  return PLANS[plan];
+}
+
+function formatDuur(ms) {
+  if (ms === null) return 'Lifetime';
+  const dagen = Math.floor(ms / (24 * 60 * 60 * 1000));
+  const uren = Math.floor((ms % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+  if (dagen > 0 && uren > 0) return `${dagen}d ${uren}u`;
+  if (dagen > 0) return `${dagen}d`;
+  return `${uren}u`;
+}
+
+function formatResterend(eindTijd) {
+  if (eindTijd === null) return 'Lifetime';
+  const over = eindTijd - Date.now();
+  if (over <= 0) return 'Verlopen';
+  const dagen = Math.floor(over / (24 * 60 * 60 * 1000));
+  const uren = Math.floor((over % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+  const minuten = Math.floor((over % (60 * 60 * 1000)) / (60 * 1000));
+  if (dagen > 0) return `${dagen}d ${uren}u`;
+  if (uren > 0) return `${uren}u ${minuten}m`;
+  return `${minuten}m`;
+}
+// ==============
+
+// ===== Commands =====
+const commands = [
+  {
+    name: 'review',
+    description: 'Schrijf een review voor Vexora External + Bypass',
+    options: [
+      { name: 'extra', description: 'Vertel kort je ervaring', type: 3, required: true },
+    ],
+  },
+  {
+    name: 'purchase',
+    description: 'Ken een tijdelijke rol toe aan een gebruiker',
+    options: [
+      { name: 'user', description: 'De gebruiker', type: 6, required: true },
+      {
+        name: 'plan',
+        description: 'Welk plan',
+        type: 3,
+        required: true,
+        choices: [
+          { name: '1 dag', value: '1 dag' },
+          { name: '1 week', value: '1 week' },
+          { name: '1 maand', value: '1 maand' },
+          { name: 'Lifetime', value: 'lifetime' },
+        ],
+      },
+    ],
+  },
+];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
@@ -66,8 +124,8 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
   }
 })();
 
-// ===== Review nummer: Gist eerst, kanaal als fallback =====
-async function leesCounter() {
+// ===== Gist storage =====
+async function leesGist() {
   const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
     headers: {
       Authorization: `Bearer ${GITHUB_TOKEN}`,
@@ -76,10 +134,16 @@ async function leesCounter() {
   });
   if (!res.ok) throw new Error(`Gist read faalde: ${res.status}`);
   const data = await res.json();
-  return JSON.parse(data.files['reviews.json'].content).counter || 0;
+  const content = data.files['reviews.json'].content;
+  const parsed = JSON.parse(content);
+  // Zorg dat beide velden bestaan
+  return {
+    counter: parsed.counter || 0,
+    purchases: parsed.purchases || [],
+  };
 }
 
-async function schrijfCounter(n) {
+async function schrijfGist(data) {
   const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
     method: 'PATCH',
     headers: {
@@ -88,12 +152,56 @@ async function schrijfCounter(n) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      files: { 'reviews.json': { content: JSON.stringify({ counter: n }) } },
+      files: {
+        'reviews.json': { content: JSON.stringify(data, null, 2) },
+      },
     }),
   });
   if (!res.ok) throw new Error(`Gist write faalde: ${res.status}`);
 }
 
+async function leesCounter() {
+  const data = await leesGist();
+  return data.counter;
+}
+
+async function schrijfCounter(n) {
+  const data = await leesGist();
+  data.counter = n;
+  await schrijfGist(data);
+}
+
+// ===== Purchase logica =====
+async function getPurchases() {
+  const data = await leesGist();
+  return data.purchases;
+}
+
+async function savePurchases(purchases) {
+  const data = await leesGist();
+  data.purchases = purchases;
+  await schrijfGist(data);
+}
+
+async function addPurchase(userId, plan) {
+  const purchases = await getPurchases();
+  const duur = planDuurMs(plan);
+  const eindTijd = duur === null ? null : Date.now() + duur;
+
+  // Verwijder bestaande entry voor deze user (vervang door nieuwe)
+  const filtered = purchases.filter(p => p.userId !== userId);
+  filtered.push({
+    userId,
+    plan,
+    eindTijd,
+    gestart: Date.now(),
+  });
+
+  await savePurchases(filtered);
+  return { eindTijd, duur };
+}
+
+// ===== Review nummer =====
 async function scanKanaal(channel) {
   let hoogste = 0;
   let laatsteId = null;
@@ -133,13 +241,12 @@ async function volgendNummer(channel) {
   }
 }
 
-// ===== Status afwisselen tussen Reviews en Members =====
+// ===== Status =====
 let statusToggle = false;
 let cachedCounter = 0;
 
 async function haalMemberCount() {
   try {
-    // Forceer verse data (geen cache)
     const guild = await client.guilds.fetch({ guild: GUILD_ID, force: true });
     return guild.memberCount;
   } catch (e) {
@@ -156,7 +263,6 @@ async function updateStatus() {
     } else {
       client.user.setActivity(`${cachedCounter} Reviews`, { type: 3 });
     }
-
     statusToggle = !statusToggle;
   } catch (e) {
     console.error('Kon status niet updaten:', e.message);
@@ -177,8 +283,114 @@ function startStatusInterval() {
   setInterval(refreshCounterCache, 60000);
   setInterval(updateStatus, STATUS_INTERVAL);
 }
-// ==========================================================
 
+// ===== Rol verval check =====
+async function checkRolVerval() {
+  try {
+    const guild = await client.guilds.fetch(GUILD_ID);
+    const purchases = await getPurchases();
+    const nu = Date.now();
+
+    for (const p of purchases) {
+      if (p.eindTijd === null) continue; // lifetime, skip
+      if (p.eindTijd > nu) continue;     // nog niet verlopen
+
+      // Verlopen — haal rol weg
+      try {
+        const member = await guild.members.fetch(p.userId);
+        if (member && member.roles.cache.has(REQUIRED_ROLE_ID)) {
+          await member.roles.remove(REQUIRED_ROLE_ID, 'Plan verlopen');
+          console.log(`Rol verwijderd van ${member.user.tag} (plan verlopen)`);
+        }
+      } catch (e) {
+        console.error(`Kon rol niet verwijderen voor ${p.userId}:`, e.message);
+      }
+    }
+
+    // Verwijder verlopen entries
+    const nogActief = purchases.filter(p => p.eindTijd === null || p.eindTijd > nu);
+    if (nogActief.length !== purchases.length) {
+      await savePurchases(nogActief);
+    }
+  } catch (e) {
+    console.error('Fout bij checkRolVerval:', e.message);
+  }
+}
+
+function startVervalInterval() {
+  checkRolVerval();
+  setInterval(checkRolVerval, 60000); // elke minuut
+}
+
+// ===== Overzicht embed =====
+async function updateOverzicht() {
+  try {
+    const channel = await client.channels.fetch(PURCHASE_LOG_CHANNEL_ID);
+    if (!channel) return;
+
+    const guild = await client.guilds.fetch(GUILD_ID);
+    const purchases = await getPurchases();
+
+    // Groepeer per plan
+    const perPlan = {};
+    for (const plan of Object.keys(PLANS)) {
+      perPlan[plan] = [];
+    }
+
+    for (const p of purchases) {
+      const planNaam = p.plan === 'lifetime' ? 'Lifetime' : p.plan;
+      if (!perPlan[planNaam]) perPlan[planNaam] = [];
+      perPlan[planNaam].push(p);
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('Actieve Purchases')
+      .setColor(0x5865f2)
+      .setThumbnail(LOGO)
+      .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+      .setTimestamp();
+
+    for (const plan of ['1 dag', '1 week', '1 maand', 'Lifetime']) {
+      const lijst = perPlan[plan] || [];
+      let value = '';
+
+      if (lijst.length === 0) {
+        value = '*Geen*';
+      } else {
+        for (const p of lijst) {
+          const resterend = formatResterend(p.eindTijd);
+          value += `<@${p.userId}> — ${resterend}\n`;
+        }
+      }
+
+      // Discord embed veld max 1024 chars
+      if (value.length > 1024) {
+        value = value.slice(0, 1020) + '...';
+      }
+
+      embed.addFields({ name: `**${plan}** (${lijst.length})`, value, inline: false });
+    }
+
+    // Zoek laatste bericht van bot in kanaal
+    const berichten = await channel.messages.fetch({ limit: 20 });
+    const eigenBericht = berichten.find(m => m.author.id === client.user.id && m.embeds.length > 0);
+
+    if (eigenBericht) {
+      await eigenBericht.edit({ embeds: [embed] });
+    } else {
+      await channel.send({ embeds: [embed] });
+    }
+  } catch (e) {
+    console.error('Kon overzicht niet updaten:', e.message);
+  }
+}
+
+function startOverzichtInterval() {
+  updateOverzicht();
+  setInterval(updateOverzicht, 60000); // elke minuut
+}
+
+// ===== Helpers =====
 function sterren(n) {
   return '⭐'.repeat(n) + '☆'.repeat(5 - n);
 }
@@ -206,7 +418,9 @@ function submitRow() {
   );
 }
 
+// ===== Interaction handler =====
 client.on('interactionCreate', async (i) => {
+  // ===== /review =====
   if (i.isChatInputCommand() && i.commandName === 'review') {
     if (i.channelId !== REVIEW_CHANNEL_ID) {
       return i.reply({
@@ -223,7 +437,6 @@ client.on('interactionCreate', async (i) => {
     }
 
     const extra = i.options.getString('extra');
-
     reviews.set(i.user.id, { product: PRODUCT, extra, rating: null });
 
     const embed = new EmbedBuilder()
@@ -239,6 +452,68 @@ client.on('interactionCreate', async (i) => {
     });
   }
 
+  // ===== /purchase =====
+  if (i.isChatInputCommand() && i.commandName === 'purchase') {
+    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) {
+      return i.reply({
+        content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig om dit te doen.`,
+        ephemeral: true,
+      });
+    }
+
+    await i.deferReply({ ephemeral: true });
+
+    const doelUser = i.options.getUser('user');
+    const plan = i.options.getString('plan');
+    const duur = planDuurMs(plan);
+
+    if (duur === undefined) {
+      return i.editReply({ content: 'Onbekend plan.' });
+    }
+
+    try {
+      const guild = await client.guilds.fetch(GUILD_ID);
+      const member = await guild.members.fetch(doelUser.id);
+
+      // Voeg rol toe
+      await member.roles.add(REQUIRED_ROLE_ID, `Purchase: ${plan}`);
+
+      // Sla op in Gist
+      const { eindTijd } = await addPurchase(doelUser.id, plan);
+
+      // Update overzicht
+      await updateOverzicht();
+
+      const duurTekst = formatDuur(duur);
+
+      const embed = new EmbedBuilder()
+        .setTitle('Purchase toegekend')
+        .setColor(0x00ff88)
+        .setThumbnail(LOGO)
+        .addFields(
+          { name: 'Gebruiker', value: `<@${doelUser.id}>`, inline: true },
+          { name: 'Plan', value: plan === 'lifetime' ? 'Lifetime' : plan, inline: true },
+          { name: 'Duur', value: duurTekst, inline: true },
+          {
+            name: 'Verloopt',
+            value: eindTijd === null
+              ? 'Nooit (Lifetime)'
+              : `<t:${Math.floor(eindTijd / 1000)}:F> (<t:${Math.floor(eindTijd / 1000)}:R>)`,
+            inline: false,
+          }
+        )
+        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+        .setTimestamp();
+
+      await i.editReply({ embeds: [embed] });
+    } catch (e) {
+      console.error('Purchase fout:', e);
+      await i.editReply({ content: `Fout: ${e.message}` });
+    }
+    return;
+  }
+
+  // ===== Review buttons =====
   if (i.isButton()) {
     const review = reviews.get(i.user.id);
     if (!review) {
@@ -298,9 +573,12 @@ client.on('interactionCreate', async (i) => {
   }
 });
 
+// ===== Ready =====
 client.once('ready', async () => {
   console.log(`online als ${client.user.tag}`);
   startStatusInterval();
+  startVervalInterval();
+  startOverzichtInterval();
 });
 
 client.login(TOKEN);
