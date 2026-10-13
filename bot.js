@@ -36,6 +36,7 @@ const TICKET_PANEL_CHANNEL_ID = '1559557702915588238';
 const TICKET_SUPPORT_ROLE_ID = '1554510750092099688';
 const TICKET_TRANSCRIPT_CHANNEL_ID = '1554510754852511845';
 const LEGIT_CHANNEL_ID = '1559585421489344513';
+const VOTE_LOG_CHANNEL_ID = '1559588394336653332';
 const PRODUCT = 'Vexora External + Bypass';
 const STATUS_INTERVAL = 8000;
 
@@ -340,6 +341,27 @@ function buildLegitRow(votes) {
     .setStyle(ButtonStyle.Secondary);
 
   return new ActionRowBuilder().addComponents(approveBtn, rejectBtn);
+}
+
+// ===== Vote log =====
+async function logVote(userId, type, doel) {
+  try {
+    const channel = await client.channels.fetch(VOTE_LOG_CHANNEL_ID);
+    if (!channel) return;
+
+    const emoji = type === 'approve' ? '✅' : '❌';
+    const tekst = type === 'approve' ? 'een vinkje' : 'een kruisje';
+
+    const embed = new EmbedBuilder()
+      .setColor(type === 'approve' ? 0x00ff88 : 0xff4444)
+      .setDescription(`<@${userId}> heeft ${emoji} ${tekst} gestemd op ${doel}`)
+      .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+      .setTimestamp();
+
+    await channel.send({ embeds: [embed] });
+  } catch (e) {
+    console.error('Kon vote log niet sturen:', e.message);
+  }
 }
 
 // ===== Review nummer =====
@@ -917,7 +939,6 @@ async function setupLegitPoll() {
 
     const messageId = await getLegitMessageId();
 
-    // Bewerk bestaand bericht indien mogelijk
     if (messageId) {
       try {
         const msg = await channel.messages.fetch(messageId);
@@ -927,11 +948,10 @@ async function setupLegitPoll() {
           return;
         }
       } catch (e) {
-        // Bericht bestaat niet meer — nieuwe plaatsen
+        // Bericht bestaat niet meer
       }
     }
 
-    // Geen bestaand bericht: verwijder alle bot-berichten en plaats nieuw
     await clearBotMessages(channel);
     const nieuw = await channel.send({ embeds: [embed], components: [row] });
     await setLegitMessageId(nieuw.id);
@@ -1356,7 +1376,9 @@ client.on('interactionCreate', async (i) => {
         votes.approve = votes.approve.filter(id => id !== userId);
         votes.reject = votes.reject.filter(id => id !== userId);
 
-        if (i.customId === 'legit_approve') {
+        const type = i.customId === 'legit_approve' ? 'approve' : 'reject';
+
+        if (type === 'approve') {
           votes.approve.push(userId);
         } else {
           votes.reject.push(userId);
@@ -1368,6 +1390,8 @@ client.on('interactionCreate', async (i) => {
           embeds: [buildLegitEmbed(votes)],
           components: [buildLegitRow(votes)],
         });
+
+        await logVote(userId, type, '**Are we legit?**');
       } catch (e) {
         console.error('Legit stem fout:', e);
         await i.reply({ content: `Fout: ${e.message}`, ephemeral: true });
@@ -1472,6 +1496,12 @@ client.on('interactionCreate', async (i) => {
           embeds: [buildSuggestieEmbed(s)],
           components: [buildSuggestieRow(messageId, s)],
         });
+
+        await logVote(
+          userId,
+          isApprove ? 'approve' : 'reject',
+          `suggestie: **${s.tekst.slice(0, 80)}${s.tekst.length > 80 ? '...' : ''}**`
+        );
       } catch (e) {
         console.error('Suggestie stem fout:', e);
         await i.reply({ content: `Fout: ${e.message}`, ephemeral: true });
