@@ -579,7 +579,7 @@ client.on('interactionCreate', async (i) => {
           .setThumbnail(LOGO)
           .setDescription(
             `Hey <@${doelUser.id}>,\n\n` +
-            `Bedankt voor je aankoop van **${planTekst}** voor **${PRODUCT}**!\n\n` +
+            `Bedankt voor je aankoop van **${planTekst} Plan** voor **${PRODUCT}**!\n\n` +
             `Hier is je key:\n\`\`\`${key}\`\`\`\n` +
             `Bewaar deze goed — je hebt hem nodig om het product te gebruiken.\n\n` +
             `Wil je een review achterlaten? Gebruik \`/review\` in de server. Dat stellen we enorm op prijs! 💙`
