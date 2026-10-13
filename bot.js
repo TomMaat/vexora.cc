@@ -138,7 +138,7 @@ const commands = [
   },
   {
     name: 'refresh',
-    description: 'Verwijder het overzicht en plaats een nieuw bericht',
+    description: 'Plaats het overzicht opnieuw',
   },
 ];
 
@@ -177,6 +177,7 @@ async function leesGist() {
     purchases: parsed.purchases || [],
     suggestions: parsed.suggestions || {},
     tickets: parsed.tickets || {},
+    overzichtMessageId: parsed.overzichtMessageId || null,
   };
 }
 
@@ -429,7 +430,18 @@ async function clearBotMessages(channel) {
   }
 }
 
-// ===== Overzicht (1 bericht garantie) =====
+// ===== Overzicht =====
+async function getOverzichtMessageId() {
+  const data = await leesGist();
+  return data.overzichtMessageId;
+}
+
+async function setOverzichtMessageId(id) {
+  const data = await leesGist();
+  data.overzichtMessageId = id;
+  await schrijfGist(data);
+}
+
 async function bouwOverzichtEmbed() {
   const purchases = await getPurchases();
 
@@ -481,12 +493,24 @@ async function updateOverzicht() {
     if (!channel) return;
 
     const embed = await bouwOverzichtEmbed();
+    const messageId = await getOverzichtMessageId();
 
-    // Verwijder alle bot-berichten (zorgt voor 1 bericht)
+    if (messageId) {
+      try {
+        const msg = await channel.messages.fetch(messageId);
+        if (msg && msg.author.id === client.user.id) {
+          await msg.edit({ embeds: [embed] });
+          return;
+        }
+      } catch (e) {
+        // Bericht bestaat niet meer, nieuwe plaatsen
+      }
+    }
+
+    // Geen geldig bericht: schoonmaken en nieuwe plaatsen
     await clearBotMessages(channel);
-
-    // Plaats nieuw bericht
-    await channel.send({ embeds: [embed] });
+    const nieuw = await channel.send({ embeds: [embed] });
+    await setOverzichtMessageId(nieuw.id);
   } catch (e) {
     console.error('Kon overzicht niet updaten:', e.message);
   }
@@ -501,7 +525,10 @@ async function herstartOverzicht() {
     }
 
     await clearBotMessages(channel);
-    await updateOverzicht();
+
+    const embed = await bouwOverzichtEmbed();
+    const nieuw = await channel.send({ embeds: [embed] });
+    await setOverzichtMessageId(nieuw.id);
   } catch (e) {
     console.error('Kon overzicht niet herstarten:', e.message);
   }
@@ -1430,8 +1457,8 @@ client.once('ready', async () => {
   startStatusInterval();
   startVervalInterval();
 
-  // Zorg dat overzicht 1 bericht is bij opstart
-  await herstartOverzicht();
+  // Update overzicht (bewerkt bestaand bericht of plaatst nieuw)
+  await updateOverzicht();
   startOverzichtInterval();
 
   await setupVerify();
