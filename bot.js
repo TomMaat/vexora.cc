@@ -9,6 +9,7 @@ const {
   StringSelectMenuBuilder,
   ChannelType,
   PermissionFlagsBits,
+  AttachmentBuilder,
   REST,
   Routes,
 } = require('discord.js');
@@ -33,6 +34,7 @@ const VERIFY_ROLE_ID = '1554510750092099690';
 const PRICING_CHANNEL_ID = '1559555369209045012';
 const TICKET_PANEL_CHANNEL_ID = '1559557702915588238';
 const TICKET_SUPPORT_ROLE_ID = '1554510750092099688';
+const TICKET_TRANSCRIPT_CHANNEL_ID = '1554510754852511845';
 const PRODUCT = 'Vexora External + Bypass';
 const STATUS_INTERVAL = 8000;
 
@@ -486,6 +488,70 @@ async function clearBotMessages(channel) {
     laatsteId = berichten.last().id;
     if (berichten.size < 100) doorzoeken = false;
   }
+}
+
+// ===== Transcript maken =====
+async function maakTranscript(channel) {
+  let alleBerichten = [];
+  let laatsteId = null;
+  let doorzoeken = true;
+
+  while (doorzoeken) {
+    const opties = { limit: 100 };
+    if (laatsteId) opties.before = laatsteId;
+
+    const berichten = await channel.messages.fetch(opties);
+    if (berichten.size === 0) break;
+
+    alleBerichten.push(...berichten.values());
+    laatsteId = berichten.last().id;
+    if (berichten.size < 100) doorzoeken = false;
+  }
+
+  // Oudste eerst
+  alleBerichten.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+  const html = `<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<title>Transcript - ${channel.name}</title>
+<style>
+  body { background:#1e1f22; color:#dbdee1; font-family:Arial,sans-serif; padding:20px; }
+  h1 { color:#5865f2; border-bottom:1px solid #40444b; padding-bottom:10px; }
+  .meta { color:#949ba4; font-size:14px; margin-bottom:20px; }
+  .msg { display:flex; padding:10px; border-bottom:1px solid #2b2d31; }
+  .avatar { width:40px; height:40px; border-radius:50%; margin-right:12px; flex-shrink:0; }
+  .content { flex:1; }
+  .author { color:#fff; font-weight:bold; }
+  .time { color:#949ba4; font-size:12px; margin-left:8px; }
+  .text { color:#dbdee1; margin-top:4px; white-space:pre-wrap; word-wrap:break-word; }
+  .attachment { color:#00a8fc; font-size:13px; margin-top:4px; }
+  .bot { background:#2b2d31; border-left:3px solid #5865f2; }
+</style>
+</head>
+<body>
+  <h1>Transcript: #${channel.name}</h1>
+  <div class="meta">
+    <div><strong>Kanaal ID:</strong> ${channel.id}</div>
+    <div><strong>Berichten:</strong> ${alleBerichten.length}</div>
+    <div><strong>Gegenereerd:</strong> ${new Date().toLocaleString('nl-NL')}</div>
+  </div>
+  ${alleBerichten.map(m => `
+    <div class="msg ${m.author.bot ? 'bot' : ''}">
+      <img class="avatar" src="${m.author.displayAvatarURL({ extension: 'png', size: 64 })}" alt="avatar">
+      <div class="content">
+        <span class="author">${m.author.tag}</span>
+        <span class="time">${new Date(m.createdTimestamp).toLocaleString('nl-NL')}</span>
+        <div class="text">${m.content ? m.content.replace(/</g, '&lt;').replace(/>/g, '&gt;') : '<em>*geen tekst*</em>'}</div>
+        ${m.attachments.size > 0 ? m.attachments.map(a => `<div class="attachment">📎 <a href="${a.url}" style="color:#00a8fc">${a.name}</a></div>`).join('') : ''}
+      </div>
+    </div>
+  `).join('')}
+</body>
+</html>`;
+
+  return { html, aantalBerichten: alleBerichten.length };
 }
 
 // ===== Verify =====
@@ -1044,7 +1110,39 @@ client.on('interactionCreate', async (i) => {
           return i.reply({ content: 'Je mag dit ticket niet sluiten.', ephemeral: true });
         }
 
-        await i.reply({ content: '🔒 Ticket wordt gesloten over 5 seconden...' });
+        await i.reply({ content: '🔒 Ticket wordt gesloten en transcript wordt opgeslagen...' });
+
+        // Maak transcript
+        try {
+          const { html, aantalBerichten } = await maakTranscript(i.channel);
+          const buffer = Buffer.from(html, 'utf-8');
+          const attachment = new AttachmentBuilder(buffer, { name: `transcript-${i.channel.name}.html` });
+
+          const transcriptChannel = await client.channels.fetch(TICKET_TRANSCRIPT_CHANNEL_ID);
+
+          const cat = TICKET_CATEGORIES[ticket.categorie];
+
+          const transcriptEmbed = new EmbedBuilder()
+            .setTitle('Ticket Transcript')
+            .setColor(cat ? cat.kleur : 0x5865f2)
+            .setThumbnail(LOGO)
+            .addFields(
+              { name: 'Kanaal', value: `#${i.channel.name}`, inline: true },
+              { name: 'Klant', value: `<@${ticket.userId}>`, inline: true },
+              { name: 'Gesloten door', value: `<@${i.user.id}>`, inline: true },
+              { name: 'Categorie', value: cat ? cat.naam : 'Onbekend', inline: true },
+              { name: 'Berichten', value: `${aantalBerichten}`, inline: true }
+            )
+            .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+            .setTimestamp();
+
+          await transcriptChannel.send({
+            embeds: [transcriptEmbed],
+            files: [attachment],
+          });
+        } catch (e) {
+          console.error('Kon transcript niet maken:', e.message);
+        }
 
         await removeTicket(i.channelId);
 
