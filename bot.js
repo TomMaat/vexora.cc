@@ -21,9 +21,9 @@ const PORT = process.env.PORT || 3000;
 
 // ===== Instellingen =====
 const REVIEW_CHANNEL_ID = '1559313542509887569';
-const REQUIRED_ROLE_ID = '1556357822998913094';       // rol voor /review
-const PURCHASE_ROLE_ID = '1559485646991654922';       // rol die /purchase mag gebruiken
-const PURCHASE_LOG_CHANNEL_ID = '1559485972440293386'; // kanaal met overzicht
+const REQUIRED_ROLE_ID = '1556357822998913094';
+const PURCHASE_ROLE_ID = '1559485646991654922';
+const PURCHASE_LOG_CHANNEL_ID = '1559485972440293386';
 const PRODUCT = 'Vexora External + Bypass';
 const STATUS_INTERVAL = 8000;
 // =========================
@@ -44,10 +44,10 @@ const reviews = new Map();
 
 // ===== Plans =====
 const PLANS = {
-  '1 dag': 36 * 60 * 60 * 1000,      // 36 uur (1 dag + 12u)
-  '1 week': 8.5 * 24 * 60 * 60 * 1000, // 8.5 dagen (1 week + 12u)
-  '1 maand': 30.5 * 24 * 60 * 60 * 1000, // 30.5 dagen (1 maand + 12u)
-  'lifetime': null,                    // nooit verlopen
+  '1 dag': 36 * 60 * 60 * 1000,
+  '1 week': 8.5 * 24 * 60 * 60 * 1000,
+  '1 maand': 30.5 * 24 * 60 * 60 * 1000,
+  'lifetime': null,
 };
 
 function planDuurMs(plan) {
@@ -102,6 +102,7 @@ const commands = [
           { name: 'Lifetime', value: 'lifetime' },
         ],
       },
+      { name: 'key', description: 'De key/licentie voor de klant', type: 3, required: true },
     ],
   },
 ];
@@ -136,7 +137,6 @@ async function leesGist() {
   const data = await res.json();
   const content = data.files['reviews.json'].content;
   const parsed = JSON.parse(content);
-  // Zorg dat beide velden bestaan
   return {
     counter: parsed.counter || 0,
     purchases: parsed.purchases || [],
@@ -183,16 +183,16 @@ async function savePurchases(purchases) {
   await schrijfGist(data);
 }
 
-async function addPurchase(userId, plan) {
+async function addPurchase(userId, plan, key) {
   const purchases = await getPurchases();
   const duur = planDuurMs(plan);
   const eindTijd = duur === null ? null : Date.now() + duur;
 
-  // Verwijder bestaande entry voor deze user (vervang door nieuwe)
   const filtered = purchases.filter(p => p.userId !== userId);
   filtered.push({
     userId,
     plan,
+    key,
     eindTijd,
     gestart: Date.now(),
   });
@@ -284,7 +284,7 @@ function startStatusInterval() {
   setInterval(updateStatus, STATUS_INTERVAL);
 }
 
-// ===== Rol verval check =====
+// ===== Rol verval =====
 async function checkRolVerval() {
   try {
     const guild = await client.guilds.fetch(GUILD_ID);
@@ -292,10 +292,9 @@ async function checkRolVerval() {
     const nu = Date.now();
 
     for (const p of purchases) {
-      if (p.eindTijd === null) continue; // lifetime, skip
-      if (p.eindTijd > nu) continue;     // nog niet verlopen
+      if (p.eindTijd === null) continue;
+      if (p.eindTijd > nu) continue;
 
-      // Verlopen — haal rol weg
       try {
         const member = await guild.members.fetch(p.userId);
         if (member && member.roles.cache.has(REQUIRED_ROLE_ID)) {
@@ -307,7 +306,6 @@ async function checkRolVerval() {
       }
     }
 
-    // Verwijder verlopen entries
     const nogActief = purchases.filter(p => p.eindTijd === null || p.eindTijd > nu);
     if (nogActief.length !== purchases.length) {
       await savePurchases(nogActief);
@@ -319,19 +317,17 @@ async function checkRolVerval() {
 
 function startVervalInterval() {
   checkRolVerval();
-  setInterval(checkRolVerval, 60000); // elke minuut
+  setInterval(checkRolVerval, 60000);
 }
 
-// ===== Overzicht embed =====
+// ===== Overzicht =====
 async function updateOverzicht() {
   try {
     const channel = await client.channels.fetch(PURCHASE_LOG_CHANNEL_ID);
     if (!channel) return;
 
-    const guild = await client.guilds.fetch(GUILD_ID);
     const purchases = await getPurchases();
 
-    // Groepeer per plan
     const perPlan = {};
     for (const plan of Object.keys(PLANS)) {
       perPlan[plan] = [];
@@ -359,11 +355,11 @@ async function updateOverzicht() {
       } else {
         for (const p of lijst) {
           const resterend = formatResterend(p.eindTijd);
-          value += `<@${p.userId}> — ${resterend}\n`;
+          const key = p.key ? p.key : 'geen key';
+          value += `<@${p.userId}> — ${resterend} — \`${key}\`\n`;
         }
       }
 
-      // Discord embed veld max 1024 chars
       if (value.length > 1024) {
         value = value.slice(0, 1020) + '...';
       }
@@ -371,7 +367,6 @@ async function updateOverzicht() {
       embed.addFields({ name: `**${plan}** (${lijst.length})`, value, inline: false });
     }
 
-    // Zoek laatste bericht van bot in kanaal
     const berichten = await channel.messages.fetch({ limit: 20 });
     const eigenBericht = berichten.find(m => m.author.id === client.user.id && m.embeds.length > 0);
 
@@ -387,7 +382,7 @@ async function updateOverzicht() {
 
 function startOverzichtInterval() {
   updateOverzicht();
-  setInterval(updateOverzicht, 60000); // elke minuut
+  setInterval(updateOverzicht, 60000);
 }
 
 // ===== Helpers =====
@@ -420,7 +415,6 @@ function submitRow() {
 
 // ===== Interaction handler =====
 client.on('interactionCreate', async (i) => {
-  // ===== /review =====
   if (i.isChatInputCommand() && i.commandName === 'review') {
     if (i.channelId !== REVIEW_CHANNEL_ID) {
       return i.reply({
@@ -452,7 +446,6 @@ client.on('interactionCreate', async (i) => {
     });
   }
 
-  // ===== /purchase =====
   if (i.isChatInputCommand() && i.commandName === 'purchase') {
     if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) {
       return i.reply({
@@ -461,10 +454,11 @@ client.on('interactionCreate', async (i) => {
       });
     }
 
-    await i.deferReply({ ephemeral: true });
+    await i.deferReply();
 
     const doelUser = i.options.getUser('user');
     const plan = i.options.getString('plan');
+    const key = i.options.getString('key');
     const duur = planDuurMs(plan);
 
     if (duur === undefined) {
@@ -475,25 +469,27 @@ client.on('interactionCreate', async (i) => {
       const guild = await client.guilds.fetch(GUILD_ID);
       const member = await guild.members.fetch(doelUser.id);
 
-      // Voeg rol toe
       await member.roles.add(REQUIRED_ROLE_ID, `Purchase: ${plan}`);
 
-      // Sla op in Gist
-      const { eindTijd } = await addPurchase(doelUser.id, plan);
+      const { eindTijd } = await addPurchase(doelUser.id, plan, key);
 
-      // Update overzicht
       await updateOverzicht();
 
       const duurTekst = formatDuur(duur);
 
       const embed = new EmbedBuilder()
-        .setTitle('Purchase toegekend')
+        .setTitle('Purchase Voltooid')
         .setColor(0x00ff88)
         .setThumbnail(LOGO)
+        .setDescription(
+          `Bedankt voor je aankoop, <@${doelUser.id}>!\n\n` +
+          `Je plan is actief en je key staat hieronder.`
+        )
         .addFields(
-          { name: 'Gebruiker', value: `<@${doelUser.id}>`, inline: true },
+          { name: 'Klant', value: `<@${doelUser.id}>`, inline: true },
           { name: 'Plan', value: plan === 'lifetime' ? 'Lifetime' : plan, inline: true },
           { name: 'Duur', value: duurTekst, inline: true },
+          { name: 'Key', value: `\`\`\`${key}\`\`\``, inline: false },
           {
             name: 'Verloopt',
             value: eindTijd === null
@@ -506,6 +502,36 @@ client.on('interactionCreate', async (i) => {
         .setTimestamp();
 
       await i.editReply({ embeds: [embed] });
+
+      try {
+        const dmEmbed = new EmbedBuilder()
+          .setTitle('Bedankt voor je aankoop!')
+          .setColor(0x00ff88)
+          .setThumbnail(LOGO)
+          .setDescription(
+            `Hey <@${doelUser.id}>,\n\n` +
+            `Bedankt voor het kopen van **${plan === 'lifetime' ? 'Lifetime' : plan}** bij Vexora!\n\n` +
+            `Hier is je key:\n\`\`\`${key}\`\`\`\n` +
+            `Bewaar deze goed — je hebt hem nodig om het product te gebruiken.\n\n` +
+            `Wil je een review achterlaten? Gebruik \`/review\` in de server. Dat stellen we enorm op prijs! 💛`
+          )
+          .addFields(
+            { name: 'Plan', value: plan === 'lifetime' ? 'Lifetime' : plan, inline: true },
+            {
+              name: 'Verloopt',
+              value: eindTijd === null
+                ? 'Nooit (Lifetime)'
+                : `<t:${Math.floor(eindTijd / 1000)}:R>`,
+              inline: true,
+            }
+          )
+          .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+          .setTimestamp();
+
+        await doelUser.send({ embeds: [dmEmbed] });
+      } catch (e) {
+        console.error('Kon DM niet sturen naar', doelUser.tag, ':', e.message);
+      }
     } catch (e) {
       console.error('Purchase fout:', e);
       await i.editReply({ content: `Fout: ${e.message}` });
@@ -513,7 +539,6 @@ client.on('interactionCreate', async (i) => {
     return;
   }
 
-  // ===== Review buttons =====
   if (i.isButton()) {
     const review = reviews.get(i.user.id);
     if (!review) {
@@ -573,7 +598,6 @@ client.on('interactionCreate', async (i) => {
   }
 });
 
-// ===== Ready =====
 client.once('ready', async () => {
   console.log(`online als ${client.user.tag}`);
   startStatusInterval();
