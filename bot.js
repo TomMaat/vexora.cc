@@ -25,6 +25,9 @@ const REQUIRED_ROLE_ID = '1556357822998913094';
 const PURCHASE_ROLE_ID = '1559485646991654922';
 const PURCHASE_LOG_CHANNEL_ID = '1559485972440293386';
 const SUGGESTIE_CHANNEL_ID = '1557502689271619726';
+const VERIFY_CHANNEL_ID = '1554510752482726015';
+const VERIFY_ROLE_ID = '1554510750092099690';
+const PRICING_CHANNEL_ID = '1559555369209045012';
 const PRODUCT = 'Vexora External + Bypass';
 const STATUS_INTERVAL = 8000;
 // =========================
@@ -451,6 +454,94 @@ function startOverzichtInterval() {
   setInterval(updateOverzicht, 60000);
 }
 
+// ===== Verify + Prijslijst =====
+async function setupVerify() {
+  try {
+    const channel = await client.channels.fetch(VERIFY_CHANNEL_ID);
+    if (!channel) {
+      console.error('Verify kanaal niet gevonden');
+      return;
+    }
+
+    // Verwijder oude bot berichten in dit kanaal
+    const oude = await channel.messages.fetch({ limit: 50 });
+    for (const msg of oude.values()) {
+      if (msg.author.id === client.user.id) {
+        await msg.delete().catch(() => {});
+      }
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('Verificatie')
+      .setColor(0x00ff88)
+      .setDescription(
+        `Welkom bij **Vexora.cc**!\n\n` +
+        `Klik op de knop hieronder om je te verifiëren en toegang te krijgen tot de server.\n\n` +
+        `Door te verifiëren ga je akkoord met onze regels.`
+      )
+      .setThumbnail(LOGO)
+      .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+      .setTimestamp();
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('verify_button')
+        .setLabel('Verifiëren')
+        .setEmoji('✅')
+        .setStyle(ButtonStyle.Success)
+    );
+
+    await channel.send({ embeds: [embed], components: [row] });
+    console.log('Verify bericht geplaatst');
+  } catch (e) {
+    console.error('Kon verify niet opzetten:', e.message);
+  }
+}
+
+async function setupPricing() {
+  try {
+    const channel = await client.channels.fetch(PRICING_CHANNEL_ID);
+    if (!channel) {
+      console.error('Pricing kanaal niet gevonden');
+      return;
+    }
+
+    // Verwijder oude bot berichten in dit kanaal
+    const oude = await channel.messages.fetch({ limit: 50 });
+    for (const msg of oude.values()) {
+      if (msg.author.id === client.user.id) {
+        await msg.delete().catch(() => {});
+      }
+    }
+
+    const pricingText =
+      `# 💠 Vexora.cc Private\n\n` +
+      `💰 **Pricing**\n` +
+      `> 1 Day = **2.50 euro**\n` +
+      `> 1 Week = **7.50**\n` +
+      `> 1 Month = **20.00**\n` +
+      `> Lifetime = **60.00**\n\n` +
+      `🛡️ **Product**\n` +
+      `> • External Cheat\n` +
+      `> • Advanced bypass that removes all traces made by executing the cheat this passes all scans & manual checks.\n` +
+      `> • Daily Updates\n` +
+      `> • Easy to use interfaces\n` +
+      `> • 24/7 Support\n\n` +
+      `👨‍👨‍👧 **Group Deals**\n` +
+      `> • Duo = **30 per person**\n` +
+      `> • Trio = **20 per person**\n` +
+      `> • Squad = **15 per person**\n` +
+      `> • More? Ticket\n\n` +
+      `-# we dont sell to players who dont understand anything about bypassing this is a product specifically made for cheaters who know what they do\n\n` +
+      `||@everyone@here ||`;
+
+    await channel.send({ content: pricingText });
+    console.log('Prijslijst geplaatst');
+  } catch (e) {
+    console.error('Kon prijslijst niet plaatsen:', e.message);
+  }
+}
+
 // ===== Helpers =====
 function sterren(n) {
   return '⭐'.repeat(n) + '☆'.repeat(5 - n);
@@ -707,6 +798,29 @@ client.on('interactionCreate', async (i) => {
 
   // ===== Buttons =====
   if (i.isButton()) {
+    // Verify knop
+    if (i.customId === 'verify_button') {
+      try {
+        if (i.member.roles.cache.has(VERIFY_ROLE_ID)) {
+          return i.reply({
+            content: 'Je bent al geverifieerd.',
+            ephemeral: true,
+          });
+        }
+
+        await i.member.roles.add(VERIFY_ROLE_ID, 'Verified via knop');
+        await i.reply({
+          content: '✅ Je bent geverifieerd! Welkom bij Vexora.cc.',
+          ephemeral: true,
+        });
+      } catch (e) {
+        console.error('Verify fout:', e);
+        await i.reply({ content: `Fout: ${e.message}`, ephemeral: true });
+      }
+      return;
+    }
+
+    // Suggestie knoppen
     if (i.customId.startsWith('suggest_approve_') || i.customId.startsWith('suggest_reject_')) {
       const messageId = i.customId.split('_').pop();
 
@@ -750,6 +864,7 @@ client.on('interactionCreate', async (i) => {
       return;
     }
 
+    // Review knoppen
     const review = reviews.get(i.user.id);
     if (!review) {
       return i.reply({ content: 'Deze review is verlopen. Gebruik /review opnieuw.', ephemeral: true });
@@ -834,6 +949,10 @@ client.once('ready', async () => {
   startStatusInterval();
   startVervalInterval();
   startOverzichtInterval();
+
+  // Eenmalig verify + pricing opzetten
+  await setupVerify();
+  await setupPricing();
 });
 
 client.login(TOKEN);
