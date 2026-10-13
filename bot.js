@@ -107,6 +107,13 @@ const commands = [
     ],
   },
   {
+    name: 'removelicense',
+    description: 'Verwijder de actieve licentie van een gebruiker',
+    options: [
+      { name: 'user', description: 'De gebruiker', type: 6, required: true },
+    ],
+  },
+  {
     name: 'suggestie',
     description: 'Plaats een suggestie',
     options: [
@@ -208,6 +215,13 @@ async function addPurchase(userId, plan, key) {
 
   await savePurchases(filtered);
   return { eindTijd, duur };
+}
+
+async function removePurchase(userId) {
+  const purchases = await getPurchases();
+  const filtered = purchases.filter(p => p.userId !== userId);
+  await savePurchases(filtered);
+  return purchases.find(p => p.userId === userId);
 }
 
 // ===== Suggestie =====
@@ -593,6 +607,63 @@ client.on('interactionCreate', async (i) => {
     return;
   }
 
+  // ===== /removelicense =====
+  if (i.isChatInputCommand() && i.commandName === 'removelicense') {
+    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) {
+      return i.reply({
+        content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig om dit te doen.`,
+        ephemeral: true,
+      });
+    }
+
+    await i.deferReply();
+
+    const doelUser = i.options.getUser('user');
+
+    try {
+      const guild = await client.guilds.fetch(GUILD_ID);
+      const member = await guild.members.fetch(doelUser.id);
+
+      // Haal purchase info op vóór verwijdering
+      const bestaande = await removePurchase(doelUser.id);
+
+      if (!bestaande) {
+        return i.editReply({
+          content: `⚠️ <@${doelUser.id}> heeft geen actieve licentie in de database.`,
+        });
+      }
+
+      // Rol verwijderen als die er is
+      let rolVerwijderd = false;
+      if (member.roles.cache.has(REQUIRED_ROLE_ID)) {
+        await member.roles.remove(REQUIRED_ROLE_ID, 'Licentie verwijderd');
+        rolVerwijderd = true;
+      }
+
+      // Overzicht updaten
+      await updateOverzicht();
+
+      const embed = new EmbedBuilder()
+        .setTitle('Licentie Verwijderd')
+        .setColor(0xff4444)
+        .setThumbnail(LOGO)
+        .addFields(
+          { name: 'Klant', value: `<@${doelUser.id}>`, inline: true },
+          { name: 'Plan', value: bestaande.plan === 'lifetime' ? 'Lifetime' : bestaande.plan, inline: true },
+          { name: 'Key', value: bestaande.key ? `\`${bestaande.key}\`` : 'geen', inline: false },
+          { name: 'Rol verwijderd', value: rolVerwijderd ? 'Ja' : 'Nee (had de rol niet)', inline: true }
+        )
+        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+        .setTimestamp();
+
+      await i.editReply({ embeds: [embed] });
+    } catch (e) {
+      console.error('RemoveLicense fout:', e);
+      await i.editReply({ content: `Fout: ${e.message}` });
+    }
+    return;
+  }
+
   // ===== /suggestie =====
   if (i.isChatInputCommand() && i.commandName === 'suggestie') {
     await i.deferReply({ ephemeral: true });
@@ -638,7 +709,6 @@ client.on('interactionCreate', async (i) => {
 
   // ===== Buttons =====
   if (i.isButton()) {
-    // Suggestie knoppen
     if (i.customId.startsWith('suggest_approve_') || i.customId.startsWith('suggest_reject_')) {
       const messageId = i.customId.split('_').pop();
 
@@ -682,7 +752,6 @@ client.on('interactionCreate', async (i) => {
       return;
     }
 
-    // Review knoppen
     const review = reviews.get(i.user.id);
     if (!review) {
       return i.reply({ content: 'Deze review is verlopen. Gebruik /review opnieuw.', ephemeral: true });
