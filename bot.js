@@ -37,9 +37,9 @@ const PRODUCT = 'Vexora External + Bypass';
 const STATUS_INTERVAL = 8000;
 
 const TICKET_CATEGORIES = {
-  support: { naam: 'Support', prefix: 'support', categoryId: '1559570734664122488', emoji: '🆘', kleur: 0x3498db },
+  support: { naam: 'Support', prefix: 'support', categoryId: '1559570734664122488', emoji: '🎫', kleur: 0x3498db },
   purchase: { naam: 'Purchase', prefix: 'purchase', categoryId: '1559570790398042133', emoji: '🛒', kleur: 0x00ff88 },
-  bug: { naam: 'Bug', prefix: 'bug', categoryId: '1559570848279429290', emoji: '🐛', kleur: 0xff4444 },
+  bug: { naam: 'Bug', prefix: 'bug', categoryId: '1559570848279429290', emoji: '⚠️', kleur: 0xff4444 },
 };
 // =========================
 
@@ -538,7 +538,7 @@ async function setupPricing() {
       .setThumbnail(LOGO)
       .setDescription(
         '> Premium external cheat met advanced bypass.\n' +
-        '> Undetected. Daily updated. 24/7 support.'
+        '> ⚡ Snelle levering • 🔒 Veilig • 🕐 24/7 Support'
       )
       .addFields(
         {
@@ -597,7 +597,12 @@ async function setupTicketPanel() {
     const embed = new EmbedBuilder()
       .setTitle('Tickets')
       .setColor(0x5865f2)
-      .setDescription('Kies een categorie om een ticket te openen.')
+      .setDescription(
+        'Kies hieronder een categorie om een ticket te openen.\n\n' +
+        '> ⚡ Snelle levering\n' +
+        '> 🔒 Veilig & betrouwbaar\n' +
+        '> 🕐 24/7 Support'
+      )
       .setThumbnail(LOGO)
       .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
 
@@ -605,9 +610,9 @@ async function setupTicketPanel() {
       .setCustomId('ticket_category_select')
       .setPlaceholder('Categorie...')
       .addOptions([
-        { label: 'Support', value: 'support', emoji: '🆘' },
+        { label: 'Support', value: 'support', emoji: '🎫' },
         { label: 'Purchase', value: 'purchase', emoji: '🛒' },
-        { label: 'Bug', value: 'bug', emoji: '🐛' },
+        { label: 'Bug', value: 'bug', emoji: '⚠️' },
       ]);
 
     const row = new ActionRowBuilder().addComponents(menu);
