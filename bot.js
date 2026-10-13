@@ -137,12 +137,22 @@ async function volgendNummer(channel) {
 let statusToggle = false;
 let cachedCounter = 0;
 
+async function haalMemberCount() {
+  try {
+    // Forceer verse data (geen cache)
+    const guild = await client.guilds.fetch({ guild: GUILD_ID, force: true });
+    return guild.memberCount;
+  } catch (e) {
+    console.error('Kon memberCount niet ophalen:', e.message);
+    return 0;
+  }
+}
+
 async function updateStatus() {
   try {
-    const guild = await client.guilds.fetch(GUILD_ID);
-
     if (statusToggle) {
-      client.user.setActivity(`${guild.memberCount} Members`, { type: 3 });
+      const members = await haalMemberCount();
+      client.user.setActivity(`${members} Members`, { type: 3 });
     } else {
       client.user.setActivity(`${cachedCounter} Reviews`, { type: 3 });
     }
