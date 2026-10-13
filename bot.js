@@ -35,7 +35,7 @@ http.createServer((req, res) => {
 }).listen(PORT);
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
   presence: {
     status: 'online',
     activities: [{ name: 'Vexora.cc', type: 3 }],
@@ -805,6 +805,27 @@ client.on('interactionCreate', async (i) => {
       await i.channel.send({ embeds: [embed] });
       reviews.delete(i.user.id);
     }
+  }
+});
+
+// ===== Member leave =====
+client.on('guildMemberRemove', async (member) => {
+  if (member.guild.id !== GUILD_ID) return;
+
+  try {
+    const purchases = await getPurchases();
+    const had = purchases.find(p => p.userId === member.id);
+
+    if (!had) return;
+
+    const filtered = purchases.filter(p => p.userId !== member.id);
+    await savePurchases(filtered);
+
+    await updateOverzicht();
+
+    console.log(`${member.user.tag} heeft de server verlaten — licentie verwijderd uit overzicht`);
+  } catch (e) {
+    console.error('Fout bij guildMemberRemove:', e.message);
   }
 });
 
