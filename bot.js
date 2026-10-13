@@ -142,6 +142,19 @@ const commands = [
     name: 'refresh',
     description: 'Plaats het overzicht opnieuw',
   },
+  {
+    name: 'removekruis',
+    description: 'Verwijder een aantal kruisjes (❌) van de legit poll',
+    options: [
+      {
+        name: 'aantal',
+        description: 'Hoeveel kruisjes wil je verwijderen?',
+        type: 4, // INTEGER
+        required: true,
+        min_value: 1,
+      },
+    ],
+  },
 ];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -1253,6 +1266,96 @@ client.on('interactionCreate', async (i) => {
       await i.editReply({ content: `Overzicht vernieuwd in <#${PURCHASE_LOG_CHANNEL_ID}>.` });
     } catch (e) {
       console.error('Refresh fout:', e);
+      await i.editReply({ content: `Fout: ${e.message}` });
+    }
+    return;
+  }
+
+  // ===== /removekruis =====
+  if (i.isChatInputCommand() && i.commandName === 'removekruis') {
+    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) {
+      return i.reply({
+        content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig om dit te doen.`,
+        ephemeral: true,
+      });
+    }
+
+    await i.deferReply();
+
+    const aantal = i.options.getInteger('aantal');
+
+    try {
+      const votes = await getLegitVotes();
+      const huidig = votes.reject.length;
+
+      if (huidig === 0) {
+        return i.editReply({
+          content: '⚠️ Er zijn momenteel geen kruisjes om te verwijderen.',
+        });
+      }
+
+      const teVerwijderen = Math.min(aantal, huidig);
+
+      // Verwijder de laatste N kruisjes (recentste stemmen)
+      votes.reject.splice(huidig - teVerwijderen, teVerwijderen);
+
+      await saveLegitVotes(votes);
+
+      // Update het poll bericht
+      try {
+        const channel = await client.channels.fetch(LEGIT_CHANNEL_ID);
+        const messageId = await getLegitMessageId();
+        if (messageId) {
+          const msg = await channel.messages.fetch(messageId);
+          if (msg && msg.author.id === client.user.id) {
+            await msg.edit({
+              embeds: [buildLegitEmbed(votes)],
+              components: [buildLegitRow(votes)],
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Kon legit poll niet updaten:', e.message);
+      }
+
+      // Log de actie
+      try {
+        const logChannel = await client.channels.fetch(VOTE_LOG_CHANNEL_ID);
+        if (logChannel) {
+          const embed = new EmbedBuilder()
+            .setColor(0xff4444)
+            .setDescription(
+              `🧹 <@${i.user.id}> heeft **${teVerwijderen}** kruisje(s) ❌ verwijderd uit de legit poll.`
+            )
+            .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+            .setTimestamp();
+          await logChannel.send({ embeds: [embed] });
+        }
+      } catch (e) {
+        console.error('Kon log niet sturen:', e.message);
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('Kruisjes Verwijderd')
+        .setColor(0xff4444)
+        .setThumbnail(LOGO)
+        .addFields(
+          { name: 'Verwijderd', value: `${teVerwijderen}`, inline: true },
+          { name: 'Resterend ❌', value: `${votes.reject.length}`, inline: true },
+          { name: 'Totaal ✅', value: `${votes.approve.length}`, inline: true }
+        )
+        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+        .setTimestamp();
+
+      if (teVerwijderen < aantal) {
+        embed.setDescription(
+          `⚠️ Je vroeg om **${aantal}** te verwijderen, maar er waren er maar **${huidig}**. Alle kruisjes zijn verwijderd.`
+        );
+      }
+
+      await i.editReply({ embeds: [embed] });
+    } catch (e) {
+      console.error('RemoveKruis fout:', e);
       await i.editReply({ content: `Fout: ${e.message}` });
     }
     return;
