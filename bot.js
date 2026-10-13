@@ -222,11 +222,11 @@ async function saveSuggestions(suggestions) {
   await schrijfGist(data);
 }
 
-function buildSuggestieEmbed(s, messageId) {
+function buildSuggestieEmbed(s) {
   const approveCount = s.approve.length;
   const rejectCount = s.reject.length;
 
-  const embed = new EmbedBuilder()
+  return new EmbedBuilder()
     .setTitle('Nieuwe Suggestie')
     .setColor(0x5865f2)
     .setThumbnail(LOGO)
@@ -237,22 +237,18 @@ function buildSuggestieEmbed(s, messageId) {
     )
     .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
     .setTimestamp(s.gestart);
-
-  return embed;
 }
 
 function buildSuggestieRow(messageId, s) {
   const approveBtn = new ButtonBuilder()
     .setCustomId(`suggest_approve_${messageId}`)
-    .setLabel(`${s.approve.length}`)
-    .setEmoji('✅')
-    .setStyle(ButtonStyle.Success);
+    .setLabel(`✅ ${s.approve.length}`)
+    .setStyle(ButtonStyle.Secondary);
 
   const rejectBtn = new ButtonBuilder()
     .setCustomId(`suggest_reject_${messageId}`)
-    .setLabel(`${s.reject.length}`)
-    .setEmoji('❌')
-    .setStyle(ButtonStyle.Danger);
+    .setLabel(`❌ ${s.reject.length}`)
+    .setStyle(ButtonStyle.Secondary);
 
   return new ActionRowBuilder().addComponents(approveBtn, rejectBtn);
 }
@@ -606,7 +602,6 @@ client.on('interactionCreate', async (i) => {
     try {
       const kanaal = await client.channels.fetch(SUGGESTIE_CHANNEL_ID);
 
-      // Eerst een placeholder embed sturen om bericht-ID te krijgen
       const placeholder = new EmbedBuilder()
         .setTitle('Nieuwe Suggestie')
         .setColor(0x5865f2)
@@ -617,7 +612,6 @@ client.on('interactionCreate', async (i) => {
 
       const bericht = await kanaal.send({ embeds: [placeholder] });
 
-      // Nu opslaan in Gist met bericht-ID als key
       const suggestions = await getSuggestions();
       suggestions[bericht.id] = {
         tekst,
@@ -628,10 +622,9 @@ client.on('interactionCreate', async (i) => {
       };
       await saveSuggestions(suggestions);
 
-      // Echte embed + knoppen plaatsen
       const s = suggestions[bericht.id];
       await bericht.edit({
-        embeds: [buildSuggestieEmbed(s, bericht.id)],
+        embeds: [buildSuggestieEmbed(s)],
         components: [buildSuggestieRow(bericht.id, s)],
       });
 
@@ -645,11 +638,10 @@ client.on('interactionCreate', async (i) => {
 
   // ===== Buttons =====
   if (i.isButton()) {
-    // --- Suggestie buttons ---
+    // Suggestie knoppen
     if (i.customId.startsWith('suggest_approve_') || i.customId.startsWith('suggest_reject_')) {
       const messageId = i.customId.split('_').pop();
 
-      // Rol check
       if (!i.member.roles.cache.has(REQUIRED_ROLE_ID)) {
         return i.reply({
           content: `Je hebt de <@&${REQUIRED_ROLE_ID}> rol nodig om te stemmen.`,
@@ -668,7 +660,6 @@ client.on('interactionCreate', async (i) => {
         const isApprove = i.customId.startsWith('suggest_approve_');
         const userId = i.user.id;
 
-        // Verwijder user uit beide lijsten (zodat stem gewisseld kan worden)
         s.approve = s.approve.filter(id => id !== userId);
         s.reject = s.reject.filter(id => id !== userId);
 
@@ -680,9 +671,8 @@ client.on('interactionCreate', async (i) => {
 
         await saveSuggestions(suggestions);
 
-        // Update embed + knoppen
         await i.update({
-          embeds: [buildSuggestieEmbed(s, messageId)],
+          embeds: [buildSuggestieEmbed(s)],
           components: [buildSuggestieRow(messageId, s)],
         });
       } catch (e) {
@@ -692,7 +682,7 @@ client.on('interactionCreate', async (i) => {
       return;
     }
 
-    // --- Review buttons ---
+    // Review knoppen
     const review = reviews.get(i.user.id);
     if (!review) {
       return i.reply({ content: 'Deze review is verlopen. Gebruik /review opnieuw.', ephemeral: true });
