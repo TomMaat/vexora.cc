@@ -35,6 +35,7 @@ const PRICING_CHANNEL_ID = '1559555369209045012';
 const TICKET_PANEL_CHANNEL_ID = '1559557702915588238';
 const TICKET_SUPPORT_ROLE_ID = '1554510750092099688';
 const TICKET_TRANSCRIPT_CHANNEL_ID = '1554510754852511845';
+const LEGIT_CHANNEL_ID = '1559585421489344513';
 const PRODUCT = 'Vexora External + Bypass';
 const STATUS_INTERVAL = 8000;
 
@@ -178,6 +179,7 @@ async function leesGist() {
     suggestions: parsed.suggestions || {},
     tickets: parsed.tickets || {},
     overzichtMessageId: parsed.overzichtMessageId || null,
+    legitVotes: parsed.legitVotes || { approve: [], reject: [] },
   };
 }
 
@@ -284,6 +286,45 @@ function buildSuggestieRow(messageId, s) {
   const rejectBtn = new ButtonBuilder()
     .setCustomId(`suggest_reject_${messageId}`)
     .setLabel(`❌ ${s.reject.length}`)
+    .setStyle(ButtonStyle.Secondary);
+
+  return new ActionRowBuilder().addComponents(approveBtn, rejectBtn);
+}
+
+// ===== Legit poll =====
+async function getLegitVotes() {
+  const data = await leesGist();
+  return data.legitVotes;
+}
+
+async function saveLegitVotes(votes) {
+  const data = await leesGist();
+  data.legitVotes = votes;
+  await schrijfGist(data);
+}
+
+function buildLegitEmbed(votes) {
+  return new EmbedBuilder()
+    .setTitle('Are we legit?')
+    .setColor(0x00ff88)
+    .setDescription(
+      'Stem hieronder of Vexora legit is.\n\n' +
+      `> ✅ Legit — **${votes.approve.length}**\n` +
+      `> ❌ Not legit — **${votes.reject.length}**`
+    )
+    .setThumbnail(LOGO)
+    .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
+}
+
+function buildLegitRow(votes) {
+  const approveBtn = new ButtonBuilder()
+    .setCustomId('legit_approve')
+    .setLabel(`✅ ${votes.approve.length}`)
+    .setStyle(ButtonStyle.Secondary);
+
+  const rejectBtn = new ButtonBuilder()
+    .setCustomId('legit_reject')
+    .setLabel(`❌ ${votes.reject.length}`)
     .setStyle(ButtonStyle.Secondary);
 
   return new ActionRowBuilder().addComponents(approveBtn, rejectBtn);
@@ -507,7 +548,6 @@ async function updateOverzicht() {
       }
     }
 
-    // Geen geldig bericht: schoonmaken en nieuwe plaatsen
     await clearBotMessages(channel);
     const nieuw = await channel.send({ embeds: [embed] });
     await setOverzichtMessageId(nieuw.id);
@@ -847,6 +887,29 @@ async function setupTicketPanel() {
     console.log('Ticket panel geplaatst');
   } catch (e) {
     console.error('Kon ticket panel niet plaatsen:', e.message);
+  }
+}
+
+// ===== Legit poll =====
+async function setupLegitPoll() {
+  try {
+    const channel = await client.channels.fetch(LEGIT_CHANNEL_ID);
+    if (!channel) {
+      console.error('Legit kanaal niet gevonden');
+      return;
+    }
+
+    await clearBotMessages(channel);
+
+    const votes = await getLegitVotes();
+
+    await channel.send({
+      embeds: [buildLegitEmbed(votes)],
+      components: [buildLegitRow(votes)],
+    });
+    console.log('Legit poll geplaatst');
+  } catch (e) {
+    console.error('Kon legit poll niet plaatsen:', e.message);
   }
 }
 
@@ -1256,6 +1319,34 @@ client.on('interactionCreate', async (i) => {
       return;
     }
 
+    // Legit poll
+    if (i.customId === 'legit_approve' || i.customId === 'legit_reject') {
+      try {
+        const votes = await getLegitVotes();
+        const userId = i.user.id;
+
+        votes.approve = votes.approve.filter(id => id !== userId);
+        votes.reject = votes.reject.filter(id => id !== userId);
+
+        if (i.customId === 'legit_approve') {
+          votes.approve.push(userId);
+        } else {
+          votes.reject.push(userId);
+        }
+
+        await saveLegitVotes(votes);
+
+        await i.update({
+          embeds: [buildLegitEmbed(votes)],
+          components: [buildLegitRow(votes)],
+        });
+      } catch (e) {
+        console.error('Legit stem fout:', e);
+        await i.reply({ content: `Fout: ${e.message}`, ephemeral: true });
+      }
+      return;
+    }
+
     // Ticket sluiten
     if (i.customId === 'ticket_close') {
       try {
@@ -1457,13 +1548,13 @@ client.once('ready', async () => {
   startStatusInterval();
   startVervalInterval();
 
-  // Update overzicht (bewerkt bestaand bericht of plaatst nieuw)
   await updateOverzicht();
   startOverzichtInterval();
 
   await setupVerify();
   await setupPricing();
   await setupTicketPanel();
+  await setupLegitPoll();
 });
 
 client.login(TOKEN);
