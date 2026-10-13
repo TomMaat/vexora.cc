@@ -6,6 +6,9 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
+  ChannelType,
+  PermissionFlagsBits,
   REST,
   Routes,
 } = require('discord.js');
@@ -28,8 +31,16 @@ const SUGGESTIE_CHANNEL_ID = '1557502689271619726';
 const VERIFY_CHANNEL_ID = '1554510752482726015';
 const VERIFY_ROLE_ID = '1554510750092099690';
 const PRICING_CHANNEL_ID = '1559555369209045012';
+const TICKET_PANEL_CHANNEL_ID = '1559557702915588238';
+const TICKET_SUPPORT_ROLE_ID = '1554510750092099688';
 const PRODUCT = 'Vexora External + Bypass';
 const STATUS_INTERVAL = 8000;
+
+const TICKET_CATEGORIES = {
+  support: { naam: 'Support', categoryId: '1559570734664122488', emoji: '🆘', kleur: 0x3498db },
+  purchase: { naam: 'Purchase', categoryId: '1559570790398042133', emoji: '🛒', kleur: 0x00ff88 },
+  bug: { naam: 'Bug', categoryId: '1559570848279429290', emoji: '🐛', kleur: 0xff4444 },
+};
 // =========================
 
 http.createServer((req, res) => {
@@ -159,6 +170,7 @@ async function leesGist() {
     counter: parsed.counter || 0,
     purchases: parsed.purchases || [],
     suggestions: parsed.suggestions || {},
+    tickets: parsed.tickets || {},
   };
 }
 
@@ -577,6 +589,91 @@ async function setupPricing() {
   }
 }
 
+// ===== Ticket panel =====
+async function setupTicketPanel() {
+  try {
+    const channel = await client.channels.fetch(TICKET_PANEL_CHANNEL_ID);
+    if (!channel) {
+      console.error('Ticket panel kanaal niet gevonden');
+      return;
+    }
+
+    await clearBotMessages(channel);
+
+    const embed = new EmbedBuilder()
+      .setTitle('Support Tickets')
+      .setColor(0x5865f2)
+      .setThumbnail(LOGO)
+      .setDescription(
+        '> Kies hieronder een categorie om een ticket aan te maken.\n\n' +
+        '🆘 **Support** — Hulp nodig? Open een support ticket.\n' +
+        '🛒 **Purchase** — Vragen over een aankoop of licentie.\n' +
+        '🐛 **Bug** — Een bug of probleem gevonden? Meld het hier.'
+      )
+      .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+      .setTimestamp();
+
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId('ticket_category_select')
+      .setPlaceholder('Kies een categorie...')
+      .addOptions([
+        {
+          label: 'Support',
+          value: 'support',
+          description: 'Hulp nodig? Open een support ticket.',
+          emoji: '🆘',
+        },
+        {
+          label: 'Purchase',
+          value: 'purchase',
+          description: 'Vragen over een aankoop of licentie.',
+          emoji: '🛒',
+        },
+        {
+          label: 'Bug',
+          value: 'bug',
+          description: 'Een bug of probleem gevonden?',
+          emoji: '🐛',
+        },
+      ]);
+
+    const row = new ActionRowBuilder().addComponents(menu);
+
+    await channel.send({ embeds: [embed], components: [row] });
+    console.log('Ticket panel geplaatst');
+  } catch (e) {
+    console.error('Kon ticket panel niet plaatsen:', e.message);
+  }
+}
+
+// ===== Ticket storage =====
+async function getTickets() {
+  const data = await leesGist();
+  return data.tickets;
+}
+
+async function saveTickets(tickets) {
+  const data = await leesGist();
+  data.tickets = tickets;
+  await schrijfGist(data);
+}
+
+async function addTicket(channelId, userId, categorieKey) {
+  const tickets = await getTickets();
+  tickets[channelId] = {
+    userId,
+    categorie: categorieKey,
+    gestart: Date.now(),
+  };
+  await saveTickets(tickets);
+}
+
+async function removeTicket(channelId) {
+  const tickets = await getTickets();
+  delete tickets[channelId];
+  await saveTickets(tickets);
+}
+
 // ===== Helpers =====
 function sterren(n) {
   return '⭐'.repeat(n) + '☆'.repeat(5 - n);
@@ -831,6 +928,112 @@ client.on('interactionCreate', async (i) => {
     return;
   }
 
+  // ===== Ticket categorie select =====
+  if (i.isStringSelectMenu() && i.customId === 'ticket_category_select') {
+    await i.deferReply({ ephemeral: true });
+
+    const keuze = i.values[0];
+    const cat = TICKET_CATEGORIES[keuze];
+
+    if (!cat) {
+      return i.editReply({ content: 'Onbekende categorie.' });
+    }
+
+    try {
+      const guild = await client.guilds.fetch(GUILD_ID);
+
+      const tickets = await getTickets();
+      const bestaand = Object.entries(tickets).find(([_, t]) => t.userId === i.user.id);
+      if (bestaand) {
+        return i.editReply({
+          content: `Je hebt al een open ticket: <#${bestaand[0]}>`,
+        });
+      }
+
+      const kanaalNaam = `${cat.emoji}-${i.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '');
+
+      const permissionOverwrites = [
+        {
+          id: guild.roles.everyone.id,
+          deny: [PermissionFlagsBits.ViewChannel],
+        },
+        {
+          id: i.user.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.AttachFiles,
+          ],
+        },
+        {
+          id: TICKET_SUPPORT_ROLE_ID,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.ManageMessages,
+          ],
+        },
+        {
+          id: client.user.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ManageChannels,
+            PermissionFlagsBits.ReadMessageHistory,
+          ],
+        },
+      ];
+
+      const ticketChannel = await guild.channels.create({
+        name: kanaalNaam,
+        type: ChannelType.GuildText,
+        parent: cat.categoryId,
+        permissionOverwrites,
+        topic: `Ticket van ${i.user.tag} — Categorie: ${cat.naam}`,
+      });
+
+      await addTicket(ticketChannel.id, i.user.id, keuze);
+
+      const embed = new EmbedBuilder()
+        .setTitle(`${cat.emoji} ${cat.naam} Ticket`)
+        .setColor(cat.kleur)
+        .setThumbnail(LOGO)
+        .setDescription(
+          `Hey <@${i.user.id}>, bedankt voor het openen van een ticket!\n\n` +
+          `Een staff lid zal zo snel mogelijk bij je zijn.\n` +
+          `Beschrijf je vraag of probleem zo duidelijk mogelijk.`
+        )
+        .addFields(
+          { name: 'Categorie', value: cat.naam, inline: true },
+          { name: 'Klant', value: `<@${i.user.id}>`, inline: true }
+        )
+        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+        .setTimestamp();
+
+      const closeRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('ticket_close')
+          .setLabel('Sluiten')
+          .setEmoji('🔒')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+      await ticketChannel.send({
+        content: `<@${i.user.id}> <@&${TICKET_SUPPORT_ROLE_ID}>`,
+        embeds: [embed],
+        components: [closeRow],
+      });
+
+      await i.editReply({ content: `Ticket aangemaakt: <#${ticketChannel.id}>` });
+    } catch (e) {
+      console.error('Ticket aanmaken fout:', e);
+      await i.editReply({ content: `Fout: ${e.message}` });
+    }
+    return;
+  }
+
   // ===== Buttons =====
   if (i.isButton()) {
     // Verify knop
@@ -850,6 +1053,41 @@ client.on('interactionCreate', async (i) => {
         });
       } catch (e) {
         console.error('Verify fout:', e);
+        await i.reply({ content: `Fout: ${e.message}`, ephemeral: true });
+      }
+      return;
+    }
+
+    // Ticket sluiten
+    if (i.customId === 'ticket_close') {
+      try {
+        const tickets = await getTickets();
+        const ticket = tickets[i.channelId];
+
+        if (!ticket) {
+          return i.reply({ content: 'Dit is geen actief ticket.', ephemeral: true });
+        }
+
+        const isOwner = ticket.userId === i.user.id;
+        const isStaff = i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID);
+
+        if (!isOwner && !isStaff) {
+          return i.reply({ content: 'Je mag dit ticket niet sluiten.', ephemeral: true });
+        }
+
+        await i.reply({ content: '🔒 Ticket wordt gesloten over 5 seconden...' });
+
+        await removeTicket(i.channelId);
+
+        setTimeout(async () => {
+          try {
+            await i.channel.delete('Ticket gesloten');
+          } catch (e) {
+            console.error('Kon ticket kanaal niet verwijderen:', e.message);
+          }
+        }, 5000);
+      } catch (e) {
+        console.error('Ticket sluiten fout:', e);
         await i.reply({ content: `Fout: ${e.message}`, ephemeral: true });
       }
       return;
@@ -979,6 +1217,20 @@ client.on('guildMemberRemove', async (member) => {
   }
 });
 
+// ===== Channel delete (ticket opruimen) =====
+client.on('channelDelete', async (channel) => {
+  try {
+    const tickets = await getTickets();
+    if (tickets[channel.id]) {
+      delete tickets[channel.id];
+      await saveTickets(tickets);
+      console.log(`Ticket ${channel.name} opgeruimd uit database`);
+    }
+  } catch (e) {
+    console.error('Fout bij channelDelete:', e.message);
+  }
+});
+
 client.once('ready', async () => {
   console.log(`online als ${client.user.tag}`);
   startStatusInterval();
@@ -987,6 +1239,7 @@ client.once('ready', async () => {
 
   await setupVerify();
   await setupPricing();
+  await setupTicketPanel();
 });
 
 client.login(TOKEN);
