@@ -490,7 +490,87 @@ async function clearBotMessages(channel) {
   }
 }
 
-// ===== Transcript maken =====
+// ===== Transcript =====
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderContent(content, mentions) {
+  if (!content) return '';
+  let html = escapeHtml(content);
+
+  if (mentions && mentions.users) {
+    for (const [id, user] of mentions.users) {
+      const regex = new RegExp(`&lt;@!?${id}&gt;`, 'g');
+      html = html.replace(regex, `<span class="mention">@${escapeHtml(user.username)}</span>`);
+    }
+  }
+  if (mentions && mentions.roles) {
+    for (const [id, role] of mentions.roles) {
+      const regex = new RegExp(`&lt;@&amp;${id}&gt;`, 'g');
+      html = html.replace(regex, `<span class="mention" style="background:#3c4270">@${escapeHtml(role.name)}</span>`);
+    }
+  }
+  if (mentions && mentions.channels) {
+    for (const [id, ch] of mentions.channels) {
+      const regex = new RegExp(`&lt;#${id}&gt;`, 'g');
+      html = html.replace(regex, `<span class="mention">#${escapeHtml(ch.name)}</span>`);
+    }
+  }
+
+  html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>');
+  html = html.replace(/```([\s\S]*?)```/g, '<pre class="codeblock">$1</pre>');
+  html = html.replace(/`([^`]+)`/g, '<code class="inline">$1</code>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  html = html.replace(/\n/g, '<br>');
+  return html;
+}
+
+function renderEmbed(e) {
+  const kleur = e.color ? `#${e.color.toString(16).padStart(6, '0')}` : '#5865f2';
+
+  let velden = '';
+  if (e.fields && e.fields.length > 0) {
+    velden = `<div class="embed-fields">${e.fields.map(f =>
+      `<div class="embed-field" style="grid-column: span ${f.inline ? 1 : 2}">
+        <div class="embed-field-name">${escapeHtml(f.name)}</div>
+        <div class="embed-field-value">${renderContent(f.value)}</div>
+      </div>`
+    ).join('')}</div>`;
+  }
+
+  return `<div class="embed" style="border-left:4px solid ${kleur}">
+    <div class="embed-grid">
+      <div class="embed-main">
+        ${e.author ? `<div class="embed-author">${e.author.iconURL ? `<img src="${e.author.iconURL}" class="embed-author-icon">` : ''}${escapeHtml(e.author.name)}</div>` : ''}
+        ${e.title ? `<div class="embed-title">${escapeHtml(e.title)}</div>` : ''}
+        ${e.description ? `<div class="embed-desc">${renderContent(e.description)}</div>` : ''}
+        ${velden}
+        ${e.footer ? `<div class="embed-footer">${e.footer.iconURL ? `<img src="${e.footer.iconURL}" class="embed-footer-icon">` : ''}${escapeHtml(e.footer.text)}</div>` : ''}
+      </div>
+      ${e.thumbnail ? `<img src="${e.thumbnail.url}" class="embed-thumb">` : ''}
+    </div>
+    ${e.image ? `<img src="${e.image.url}" class="embed-image">` : ''}
+  </div>`;
+}
+
+function renderAttachments(attachments) {
+  if (!attachments || attachments.size === 0) return '';
+  return [...attachments.values()].map(a => {
+    const isImage = a.contentType && a.contentType.startsWith('image/');
+    if (isImage) {
+      return `<div class="attachment-image"><a href="${a.url}" target="_blank"><img src="${a.url}" alt="${escapeHtml(a.name)}"></a></div>`;
+    }
+    return `<div class="attachment"><a href="${a.url}" target="_blank">📎 ${escapeHtml(a.name)}</a></div>`;
+  }).join('');
+}
+
 async function maakTranscript(channel) {
   let alleBerichten = [];
   let laatsteId = null;
@@ -508,46 +588,253 @@ async function maakTranscript(channel) {
     if (berichten.size < 100) doorzoeken = false;
   }
 
-  // Oudste eerst
   alleBerichten.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+  const berichtenHtml = alleBerichten.map(m => {
+    const avatar = m.author.displayAvatarURL({ extension: 'png', size: 64 });
+    const tijd = new Date(m.createdTimestamp).toLocaleString('nl-NL', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    });
+    const botBadge = m.author.bot ? '<span class="bot-badge">BOT</span>' : '';
+
+    return `<div class="message">
+      <img class="avatar" src="${avatar}" alt="avatar">
+      <div class="message-body">
+        <div class="message-header">
+          <span class="username" style="color:${m.member && m.member.displayHexColor && m.member.displayHexColor !== '#000000' ? m.member.displayHexColor : '#ffffff'}">${escapeHtml(m.author.username)}</span>
+          ${botBadge}
+          <span class="timestamp">${tijd}</span>
+        </div>
+        ${m.content ? `<div class="message-content">${renderContent(m.content, m.mentions)}</div>` : ''}
+        ${m.embeds && m.embeds.length > 0 ? m.embeds.map(renderEmbed).join('') : ''}
+        ${renderAttachments(m.attachments)}
+      </div>
+    </div>`;
+  }).join('');
 
   const html = `<!DOCTYPE html>
 <html lang="nl">
 <head>
 <meta charset="UTF-8">
-<title>Transcript - ${channel.name}</title>
+<title>Transcript - #${escapeHtml(channel.name)}</title>
+<link rel="icon" href="${LOGO}">
 <style>
-  body { background:#1e1f22; color:#dbdee1; font-family:Arial,sans-serif; padding:20px; }
-  h1 { color:#5865f2; border-bottom:1px solid #40444b; padding-bottom:10px; }
-  .meta { color:#949ba4; font-size:14px; margin-bottom:20px; }
-  .msg { display:flex; padding:10px; border-bottom:1px solid #2b2d31; }
-  .avatar { width:40px; height:40px; border-radius:50%; margin-right:12px; flex-shrink:0; }
-  .content { flex:1; }
-  .author { color:#fff; font-weight:bold; }
-  .time { color:#949ba4; font-size:12px; margin-left:8px; }
-  .text { color:#dbdee1; margin-top:4px; white-space:pre-wrap; word-wrap:break-word; }
-  .attachment { color:#00a8fc; font-size:13px; margin-top:4px; }
-  .bot { background:#2b2d31; border-left:3px solid #5865f2; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #313338;
+    color: #dbdee1;
+    font-family: 'gg sans', 'Whitney', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.375;
+  }
+  .header {
+    background: #2b2d31;
+    padding: 16px 20px;
+    border-bottom: 1px solid #1e1f22;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .header h1 {
+    margin: 0;
+    font-size: 18px;
+    color: #f2f3f5;
+  }
+  .header .meta {
+    color: #949ba4;
+    font-size: 13px;
+    margin-top: 4px;
+  }
+  .chat {
+    padding: 20px 0;
+  }
+  .message {
+    display: flex;
+    padding: 4px 20px;
+    margin-top: 16px;
+  }
+  .message:hover {
+    background: #2e3035;
+  }
+  .avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    margin-right: 16px;
+    flex-shrink: 0;
+  }
+  .message-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .message-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  .username {
+    font-weight: 500;
+    font-size: 16px;
+  }
+  .bot-badge {
+    background: #5865f2;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 4px;
+    border-radius: 3px;
+    letter-spacing: 0.5px;
+  }
+  .timestamp {
+    color: #949ba4;
+    font-size: 12px;
+  }
+  .message-content {
+    color: #dbdee1;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+  }
+  .message-content a {
+    color: #00a8fc;
+    text-decoration: none;
+  }
+  .message-content a:hover {
+    text-decoration: underline;
+  }
+  .mention {
+    background: #3c4270;
+    color: #c9cdfb;
+    padding: 0 2px;
+    border-radius: 3px;
+    font-weight: 500;
+  }
+  .inline {
+    background: #2b2d31;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 14px;
+  }
+  .codeblock {
+    background: #2b2d31;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 14px;
+    overflow-x: auto;
+    margin: 4px 0;
+    white-space: pre-wrap;
+  }
+  .embed {
+    background: #2b2d31;
+    border-radius: 4px;
+    padding: 12px 16px;
+    margin-top: 8px;
+    max-width: 520px;
+  }
+  .embed-grid {
+    display: flex;
+    gap: 12px;
+  }
+  .embed-main {
+    flex: 1;
+    min-width: 0;
+  }
+  .embed-author {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #f2f3f5;
+    margin-bottom: 4px;
+  }
+  .embed-author-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+  }
+  .embed-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #f2f3f5;
+    margin-bottom: 4px;
+  }
+  .embed-desc {
+    font-size: 14px;
+    color: #dbdee1;
+    margin-bottom: 8px;
+  }
+  .embed-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .embed-field-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: #f2f3f5;
+    margin-bottom: 2px;
+  }
+  .embed-field-value {
+    font-size: 14px;
+    color: #dbdee1;
+  }
+  .embed-thumb {
+    width: 80px;
+    height: 80px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    object-fit: cover;
+  }
+  .embed-image {
+    max-width: 100%;
+    border-radius: 4px;
+    margin-top: 8px;
+  }
+  .embed-footer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #949ba4;
+    margin-top: 8px;
+  }
+  .embed-footer-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+  }
+  .attachment {
+    margin-top: 6px;
+    font-size: 14px;
+  }
+  .attachment a {
+    color: #00a8fc;
+    text-decoration: none;
+  }
+  .attachment-image {
+    margin-top: 8px;
+  }
+  .attachment-image img {
+    max-width: 400px;
+    max-height: 300px;
+    border-radius: 4px;
+  }
 </style>
 </head>
 <body>
-  <h1>Transcript: #${channel.name}</h1>
-  <div class="meta">
-    <div><strong>Kanaal ID:</strong> ${channel.id}</div>
-    <div><strong>Berichten:</strong> ${alleBerichten.length}</div>
-    <div><strong>Gegenereerd:</strong> ${new Date().toLocaleString('nl-NL')}</div>
+  <div class="header">
+    <h1>Transcript: #${escapeHtml(channel.name)}</h1>
+    <div class="meta">${alleBerichten.length} berichten • Gegenereerd op ${new Date().toLocaleString('nl-NL')}</div>
   </div>
-  ${alleBerichten.map(m => `
-    <div class="msg ${m.author.bot ? 'bot' : ''}">
-      <img class="avatar" src="${m.author.displayAvatarURL({ extension: 'png', size: 64 })}" alt="avatar">
-      <div class="content">
-        <span class="author">${m.author.tag}</span>
-        <span class="time">${new Date(m.createdTimestamp).toLocaleString('nl-NL')}</span>
-        <div class="text">${m.content ? m.content.replace(/</g, '&lt;').replace(/>/g, '&gt;') : '<em>*geen tekst*</em>'}</div>
-        ${m.attachments.size > 0 ? m.attachments.map(a => `<div class="attachment">📎 <a href="${a.url}" style="color:#00a8fc">${a.name}</a></div>`).join('') : ''}
-      </div>
-    </div>
-  `).join('')}
+  <div class="chat">
+    ${berichtenHtml}
+  </div>
 </body>
 </html>`;
 
@@ -558,10 +845,7 @@ async function maakTranscript(channel) {
 async function setupVerify() {
   try {
     const channel = await client.channels.fetch(VERIFY_CHANNEL_ID);
-    if (!channel) {
-      console.error('Verify kanaal niet gevonden');
-      return;
-    }
+    if (!channel) return;
 
     await clearBotMessages(channel);
 
@@ -591,10 +875,7 @@ async function setupVerify() {
 async function setupPricing() {
   try {
     const channel = await client.channels.fetch(PRICING_CHANNEL_ID);
-    if (!channel) {
-      console.error('Pricing kanaal niet gevonden');
-      return;
-    }
+    if (!channel) return;
 
     await clearBotMessages(channel);
 
@@ -653,10 +934,7 @@ async function setupPricing() {
 async function setupTicketPanel() {
   try {
     const channel = await client.channels.fetch(TICKET_PANEL_CHANNEL_ID);
-    if (!channel) {
-      console.error('Ticket panel kanaal niet gevonden');
-      return;
-    }
+    if (!channel) return;
 
     await clearBotMessages(channel);
 
@@ -704,11 +982,7 @@ async function saveTickets(tickets) {
 
 async function addTicket(channelId, userId, categorieKey) {
   const tickets = await getTickets();
-  tickets[channelId] = {
-    userId,
-    categorie: categorieKey,
-    gestart: Date.now(),
-  };
+  tickets[channelId] = { userId, categorie: categorieKey, gestart: Date.now() };
   await saveTickets(tickets);
 }
 
@@ -796,9 +1070,7 @@ client.on('interactionCreate', async (i) => {
     const key = i.options.getString('key');
     const duur = planDuurMs(plan);
 
-    if (duur === undefined) {
-      return i.editReply({ content: 'Onbekend plan.' });
-    }
+    if (duur === undefined) return i.editReply({ content: 'Onbekend plan.' });
 
     try {
       const guild = await client.guilds.fetch(GUILD_ID);
@@ -979,9 +1251,7 @@ client.on('interactionCreate', async (i) => {
     const keuze = i.values[0];
     const cat = TICKET_CATEGORIES[keuze];
 
-    if (!cat) {
-      return i.editReply({ content: 'Onbekende categorie.' });
-    }
+    if (!cat) return i.editReply({ content: 'Onbekende categorie.' });
 
     try {
       const guild = await client.guilds.fetch(GUILD_ID);
@@ -997,10 +1267,7 @@ client.on('interactionCreate', async (i) => {
       const kanaalNaam = `${cat.prefix}-${i.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '');
 
       const permissionOverwrites = [
-        {
-          id: guild.roles.everyone.id,
-          deny: [PermissionFlagsBits.ViewChannel],
-        },
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
         {
           id: i.user.id,
           allow: [
@@ -1071,21 +1338,14 @@ client.on('interactionCreate', async (i) => {
 
   // ===== Buttons =====
   if (i.isButton()) {
-    // Verify knop
+    // Verify
     if (i.customId === 'verify_button') {
       try {
         if (i.member.roles.cache.has(VERIFY_ROLE_ID)) {
-          return i.reply({
-            content: 'Je bent al geverifieerd.',
-            ephemeral: true,
-          });
+          return i.reply({ content: 'Je bent al geverifieerd.', ephemeral: true });
         }
-
         await i.member.roles.add(VERIFY_ROLE_ID, 'Verified via knop');
-        await i.reply({
-          content: '✅ Je bent geverifieerd! Welkom bij Vexora.cc.',
-          ephemeral: true,
-        });
+        await i.reply({ content: '✅ Je bent geverifieerd! Welkom bij Vexora.cc.', ephemeral: true });
       } catch (e) {
         console.error('Verify fout:', e);
         await i.reply({ content: `Fout: ${e.message}`, ephemeral: true });
@@ -1112,14 +1372,12 @@ client.on('interactionCreate', async (i) => {
 
         await i.reply({ content: '🔒 Ticket wordt gesloten en transcript wordt opgeslagen...' });
 
-        // Maak transcript
         try {
           const { html, aantalBerichten } = await maakTranscript(i.channel);
           const buffer = Buffer.from(html, 'utf-8');
           const attachment = new AttachmentBuilder(buffer, { name: `transcript-${i.channel.name}.html` });
 
           const transcriptChannel = await client.channels.fetch(TICKET_TRANSCRIPT_CHANNEL_ID);
-
           const cat = TICKET_CATEGORIES[ticket.categorie];
 
           const transcriptEmbed = new EmbedBuilder()
@@ -1160,7 +1418,7 @@ client.on('interactionCreate', async (i) => {
       return;
     }
 
-    // Suggestie knoppen
+    // Suggestie
     if (i.customId.startsWith('suggest_approve_') || i.customId.startsWith('suggest_reject_')) {
       const messageId = i.customId.split('_').pop();
 
@@ -1175,9 +1433,7 @@ client.on('interactionCreate', async (i) => {
         const suggestions = await getSuggestions();
         const s = suggestions[messageId];
 
-        if (!s) {
-          return i.reply({ content: 'Deze suggestie bestaat niet meer.', ephemeral: true });
-        }
+        if (!s) return i.reply({ content: 'Deze suggestie bestaat niet meer.', ephemeral: true });
 
         const isApprove = i.customId.startsWith('suggest_approve_');
         const userId = i.user.id;
@@ -1185,11 +1441,8 @@ client.on('interactionCreate', async (i) => {
         s.approve = s.approve.filter(id => id !== userId);
         s.reject = s.reject.filter(id => id !== userId);
 
-        if (isApprove) {
-          s.approve.push(userId);
-        } else {
-          s.reject.push(userId);
-        }
+        if (isApprove) s.approve.push(userId);
+        else s.reject.push(userId);
 
         await saveSuggestions(suggestions);
 
@@ -1270,12 +1523,10 @@ client.on('guildMemberRemove', async (member) => {
   try {
     const purchases = await getPurchases();
     const had = purchases.find(p => p.userId === member.id);
-
     if (!had) return;
 
     const filtered = purchases.filter(p => p.userId !== member.id);
     await savePurchases(filtered);
-
     await updateOverzicht();
 
     console.log(`${member.user.tag} heeft de server verlaten — licentie verwijderd uit overzicht`);
@@ -1284,7 +1535,7 @@ client.on('guildMemberRemove', async (member) => {
   }
 });
 
-// ===== Channel delete (ticket opruimen) =====
+// ===== Channel delete =====
 client.on('channelDelete', async (channel) => {
   try {
     const tickets = await getTickets();
