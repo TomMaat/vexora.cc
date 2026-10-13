@@ -544,6 +544,7 @@ client.on('interactionCreate', async (i) => {
       await updateOverzicht();
 
       const duurTekst = formatDuur(duur);
+      const planTekst = plan === 'lifetime' ? 'Lifetime' : plan;
 
       const embed = new EmbedBuilder()
         .setTitle('Purchase Voltooid')
@@ -555,7 +556,7 @@ client.on('interactionCreate', async (i) => {
         )
         .addFields(
           { name: 'Klant', value: `<@${doelUser.id}>`, inline: true },
-          { name: 'Plan', value: plan === 'lifetime' ? 'Lifetime' : plan, inline: true },
+          { name: 'Plan', value: planTekst, inline: true },
           { name: 'Duur', value: duurTekst, inline: true },
           { name: 'Key', value: `\`\`\`${key}\`\`\``, inline: false },
           {
@@ -578,13 +579,13 @@ client.on('interactionCreate', async (i) => {
           .setThumbnail(LOGO)
           .setDescription(
             `Hey <@${doelUser.id}>,\n\n` +
-            `Bedankt voor het kopen van **${plan === 'lifetime' ? 'Lifetime' : plan}** bij Vexora!\n\n` +
+            `Bedankt voor je aankoop van **${planTekst}** voor **${PRODUCT}**!\n\n` +
             `Hier is je key:\n\`\`\`${key}\`\`\`\n` +
             `Bewaar deze goed — je hebt hem nodig om het product te gebruiken.\n\n` +
             `Wil je een review achterlaten? Gebruik \`/review\` in de server. Dat stellen we enorm op prijs! 💙`
           )
           .addFields(
-            { name: 'Plan', value: plan === 'lifetime' ? 'Lifetime' : plan, inline: true },
+            { name: 'Plan', value: planTekst, inline: true },
             {
               name: 'Verloopt',
               value: eindTijd === null
@@ -624,7 +625,6 @@ client.on('interactionCreate', async (i) => {
       const guild = await client.guilds.fetch(GUILD_ID);
       const member = await guild.members.fetch(doelUser.id);
 
-      // Haal purchase info op vóór verwijdering
       const bestaande = await removePurchase(doelUser.id);
 
       if (!bestaande) {
@@ -633,14 +633,12 @@ client.on('interactionCreate', async (i) => {
         });
       }
 
-      // Rol verwijderen als die er is
       let rolVerwijderd = false;
       if (member.roles.cache.has(REQUIRED_ROLE_ID)) {
         await member.roles.remove(REQUIRED_ROLE_ID, 'Licentie verwijderd');
         rolVerwijderd = true;
       }
 
-      // Overzicht updaten
       await updateOverzicht();
 
       const embed = new EmbedBuilder()
