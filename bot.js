@@ -180,6 +180,7 @@ async function leesGist() {
     tickets: parsed.tickets || {},
     overzichtMessageId: parsed.overzichtMessageId || null,
     legitVotes: parsed.legitVotes || { approve: [], reject: [] },
+    legitMessageId: parsed.legitMessageId || null,
   };
 }
 
@@ -303,12 +304,23 @@ async function saveLegitVotes(votes) {
   await schrijfGist(data);
 }
 
+async function getLegitMessageId() {
+  const data = await leesGist();
+  return data.legitMessageId;
+}
+
+async function setLegitMessageId(id) {
+  const data = await leesGist();
+  data.legitMessageId = id;
+  await schrijfGist(data);
+}
+
 function buildLegitEmbed(votes) {
   return new EmbedBuilder()
     .setTitle('Are we legit?')
     .setColor(0x00ff88)
     .setDescription(
-      'Stem hieronder of Vexora legit is.\n\n' +
+      '**No without proof = ban**\n\n' +
       `> ✅ Legit — **${votes.approve.length}**\n` +
       `> ❌ Not legit — **${votes.reject.length}**`
     )
@@ -544,7 +556,7 @@ async function updateOverzicht() {
           return;
         }
       } catch (e) {
-        // Bericht bestaat niet meer, nieuwe plaatsen
+        // Bericht bestaat niet meer
       }
     }
 
@@ -899,14 +911,30 @@ async function setupLegitPoll() {
       return;
     }
 
-    await clearBotMessages(channel);
-
     const votes = await getLegitVotes();
+    const embed = buildLegitEmbed(votes);
+    const row = buildLegitRow(votes);
 
-    await channel.send({
-      embeds: [buildLegitEmbed(votes)],
-      components: [buildLegitRow(votes)],
-    });
+    const messageId = await getLegitMessageId();
+
+    // Bewerk bestaand bericht indien mogelijk
+    if (messageId) {
+      try {
+        const msg = await channel.messages.fetch(messageId);
+        if (msg && msg.author.id === client.user.id) {
+          await msg.edit({ embeds: [embed], components: [row] });
+          console.log('Legit poll bijgewerkt');
+          return;
+        }
+      } catch (e) {
+        // Bericht bestaat niet meer — nieuwe plaatsen
+      }
+    }
+
+    // Geen bestaand bericht: verwijder alle bot-berichten en plaats nieuw
+    await clearBotMessages(channel);
+    const nieuw = await channel.send({ embeds: [embed], components: [row] });
+    await setLegitMessageId(nieuw.id);
     console.log('Legit poll geplaatst');
   } catch (e) {
     console.error('Kon legit poll niet plaatsen:', e.message);
