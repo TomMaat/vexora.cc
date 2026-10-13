@@ -136,6 +136,10 @@ const commands = [
       { name: 'tekst', description: 'Wat is je suggestie?', type: 3, required: true },
     ],
   },
+  {
+    name: 'refresh',
+    description: 'Verwijder het overzicht en plaats een nieuw bericht',
+  },
 ];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -403,71 +407,6 @@ function startVervalInterval() {
   setInterval(checkRolVerval, 60000);
 }
 
-// ===== Overzicht =====
-async function updateOverzicht() {
-  try {
-    const channel = await client.channels.fetch(PURCHASE_LOG_CHANNEL_ID);
-    if (!channel) return;
-
-    const purchases = await getPurchases();
-
-    const perPlan = {};
-    for (const plan of Object.keys(PLANS)) {
-      perPlan[plan] = [];
-    }
-
-    for (const p of purchases) {
-      const planNaam = p.plan === 'lifetime' ? 'Lifetime' : p.plan;
-      if (!perPlan[planNaam]) perPlan[planNaam] = [];
-      perPlan[planNaam].push(p);
-    }
-
-    const embed = new EmbedBuilder()
-      .setTitle('Actieve Purchases')
-      .setColor(0x5865f2)
-      .setThumbnail(LOGO)
-      .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
-      .setTimestamp();
-
-    for (const plan of ['1 dag', '1 week', '1 maand', 'Lifetime']) {
-      const lijst = perPlan[plan] || [];
-      let value = '';
-
-      if (lijst.length === 0) {
-        value = '*Geen*';
-      } else {
-        for (const p of lijst) {
-          const resterend = formatResterend(p.eindTijd);
-          const key = p.key ? p.key : 'geen key';
-          value += `<@${p.userId}> — ${resterend} — \`${key}\`\n`;
-        }
-      }
-
-      if (value.length > 1024) {
-        value = value.slice(0, 1020) + '...';
-      }
-
-      embed.addFields({ name: `**${plan}** (${lijst.length})`, value, inline: false });
-    }
-
-    const berichten = await channel.messages.fetch({ limit: 20 });
-    const eigenBericht = berichten.find(m => m.author.id === client.user.id && m.embeds.length > 0);
-
-    if (eigenBericht) {
-      await eigenBericht.edit({ embeds: [embed] });
-    } else {
-      await channel.send({ embeds: [embed] });
-    }
-  } catch (e) {
-    console.error('Kon overzicht niet updaten:', e.message);
-  }
-}
-
-function startOverzichtInterval() {
-  updateOverzicht();
-  setInterval(updateOverzicht, 60000);
-}
-
 // ===== Kanaal schoonmaken =====
 async function clearBotMessages(channel) {
   let laatsteId = null;
@@ -488,6 +427,89 @@ async function clearBotMessages(channel) {
     laatsteId = berichten.last().id;
     if (berichten.size < 100) doorzoeken = false;
   }
+}
+
+// ===== Overzicht (1 bericht garantie) =====
+async function bouwOverzichtEmbed() {
+  const purchases = await getPurchases();
+
+  const perPlan = {};
+  for (const plan of Object.keys(PLANS)) {
+    perPlan[plan] = [];
+  }
+
+  for (const p of purchases) {
+    const planNaam = p.plan === 'lifetime' ? 'Lifetime' : p.plan;
+    if (!perPlan[planNaam]) perPlan[planNaam] = [];
+    perPlan[planNaam].push(p);
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('Actieve Purchases')
+    .setColor(0x5865f2)
+    .setThumbnail(LOGO)
+    .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+    .setTimestamp();
+
+  for (const plan of ['1 dag', '1 week', '1 maand', 'Lifetime']) {
+    const lijst = perPlan[plan] || [];
+    let value = '';
+
+    if (lijst.length === 0) {
+      value = '*Geen*';
+    } else {
+      for (const p of lijst) {
+        const resterend = formatResterend(p.eindTijd);
+        const key = p.key ? p.key : 'geen key';
+        value += `<@${p.userId}> — ${resterend} — \`${key}\`\n`;
+      }
+    }
+
+    if (value.length > 1024) {
+      value = value.slice(0, 1020) + '...';
+    }
+
+    embed.addFields({ name: `**${plan}** (${lijst.length})`, value, inline: false });
+  }
+
+  return embed;
+}
+
+async function updateOverzicht() {
+  try {
+    const channel = await client.channels.fetch(PURCHASE_LOG_CHANNEL_ID);
+    if (!channel) return;
+
+    const embed = await bouwOverzichtEmbed();
+
+    // Verwijder alle bot-berichten (zorgt voor 1 bericht)
+    await clearBotMessages(channel);
+
+    // Plaats nieuw bericht
+    await channel.send({ embeds: [embed] });
+  } catch (e) {
+    console.error('Kon overzicht niet updaten:', e.message);
+  }
+}
+
+async function herstartOverzicht() {
+  try {
+    const channel = await client.channels.fetch(PURCHASE_LOG_CHANNEL_ID);
+    if (!channel) {
+      console.error('Purchase log kanaal niet gevonden');
+      return;
+    }
+
+    await clearBotMessages(channel);
+    await updateOverzicht();
+  } catch (e) {
+    console.error('Kon overzicht niet herstarten:', e.message);
+  }
+}
+
+function startOverzichtInterval() {
+  updateOverzicht();
+  setInterval(updateOverzicht, 60000);
 }
 
 // ===== Transcript =====
@@ -621,210 +643,43 @@ async function maakTranscript(channel) {
 <link rel="icon" href="${LOGO}">
 <style>
   * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: #313338;
-    color: #dbdee1;
-    font-family: 'gg sans', 'Whitney', 'Helvetica Neue', Arial, sans-serif;
-    font-size: 16px;
-    line-height: 1.375;
-  }
-  .header {
-    background: #2b2d31;
-    padding: 16px 20px;
-    border-bottom: 1px solid #1e1f22;
-    position: sticky;
-    top: 0;
-    z-index: 10;
-  }
-  .header h1 {
-    margin: 0;
-    font-size: 18px;
-    color: #f2f3f5;
-  }
-  .header .meta {
-    color: #949ba4;
-    font-size: 13px;
-    margin-top: 4px;
-  }
-  .chat {
-    padding: 20px 0;
-  }
-  .message {
-    display: flex;
-    padding: 4px 20px;
-    margin-top: 16px;
-  }
-  .message:hover {
-    background: #2e3035;
-  }
-  .avatar {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    margin-right: 16px;
-    flex-shrink: 0;
-  }
-  .message-body {
-    flex: 1;
-    min-width: 0;
-  }
-  .message-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 2px;
-  }
-  .username {
-    font-weight: 500;
-    font-size: 16px;
-  }
-  .bot-badge {
-    background: #5865f2;
-    color: #fff;
-    font-size: 10px;
-    font-weight: 600;
-    padding: 1px 4px;
-    border-radius: 3px;
-    letter-spacing: 0.5px;
-  }
-  .timestamp {
-    color: #949ba4;
-    font-size: 12px;
-  }
-  .message-content {
-    color: #dbdee1;
-    word-wrap: break-word;
-    white-space: pre-wrap;
-  }
-  .message-content a {
-    color: #00a8fc;
-    text-decoration: none;
-  }
-  .message-content a:hover {
-    text-decoration: underline;
-  }
-  .mention {
-    background: #3c4270;
-    color: #c9cdfb;
-    padding: 0 2px;
-    border-radius: 3px;
-    font-weight: 500;
-  }
-  .inline {
-    background: #2b2d31;
-    padding: 1px 4px;
-    border-radius: 3px;
-    font-family: monospace;
-    font-size: 14px;
-  }
-  .codeblock {
-    background: #2b2d31;
-    padding: 8px 12px;
-    border-radius: 4px;
-    font-family: monospace;
-    font-size: 14px;
-    overflow-x: auto;
-    margin: 4px 0;
-    white-space: pre-wrap;
-  }
-  .embed {
-    background: #2b2d31;
-    border-radius: 4px;
-    padding: 12px 16px;
-    margin-top: 8px;
-    max-width: 520px;
-  }
-  .embed-grid {
-    display: flex;
-    gap: 12px;
-  }
-  .embed-main {
-    flex: 1;
-    min-width: 0;
-  }
-  .embed-author {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 14px;
-    font-weight: 600;
-    color: #f2f3f5;
-    margin-bottom: 4px;
-  }
-  .embed-author-icon {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-  }
-  .embed-title {
-    font-size: 16px;
-    font-weight: 600;
-    color: #f2f3f5;
-    margin-bottom: 4px;
-  }
-  .embed-desc {
-    font-size: 14px;
-    color: #dbdee1;
-    margin-bottom: 8px;
-  }
-  .embed-fields {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    margin-top: 8px;
-  }
-  .embed-field-name {
-    font-size: 14px;
-    font-weight: 600;
-    color: #f2f3f5;
-    margin-bottom: 2px;
-  }
-  .embed-field-value {
-    font-size: 14px;
-    color: #dbdee1;
-  }
-  .embed-thumb {
-    width: 80px;
-    height: 80px;
-    border-radius: 4px;
-    flex-shrink: 0;
-    object-fit: cover;
-  }
-  .embed-image {
-    max-width: 100%;
-    border-radius: 4px;
-    margin-top: 8px;
-  }
-  .embed-footer {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: #949ba4;
-    margin-top: 8px;
-  }
-  .embed-footer-icon {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-  }
-  .attachment {
-    margin-top: 6px;
-    font-size: 14px;
-  }
-  .attachment a {
-    color: #00a8fc;
-    text-decoration: none;
-  }
-  .attachment-image {
-    margin-top: 8px;
-  }
-  .attachment-image img {
-    max-width: 400px;
-    max-height: 300px;
-    border-radius: 4px;
-  }
+  body { margin: 0; background: #313338; color: #dbdee1; font-family: 'gg sans', 'Whitney', 'Helvetica Neue', Arial, sans-serif; font-size: 16px; line-height: 1.375; }
+  .header { background: #2b2d31; padding: 16px 20px; border-bottom: 1px solid #1e1f22; position: sticky; top: 0; z-index: 10; }
+  .header h1 { margin: 0; font-size: 18px; color: #f2f3f5; }
+  .header .meta { color: #949ba4; font-size: 13px; margin-top: 4px; }
+  .chat { padding: 20px 0; }
+  .message { display: flex; padding: 4px 20px; margin-top: 16px; }
+  .message:hover { background: #2e3035; }
+  .avatar { width: 40px; height: 40px; border-radius: 50%; margin-right: 16px; flex-shrink: 0; }
+  .message-body { flex: 1; min-width: 0; }
+  .message-header { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+  .username { font-weight: 500; font-size: 16px; }
+  .bot-badge { background: #5865f2; color: #fff; font-size: 10px; font-weight: 600; padding: 1px 4px; border-radius: 3px; letter-spacing: 0.5px; }
+  .timestamp { color: #949ba4; font-size: 12px; }
+  .message-content { color: #dbdee1; word-wrap: break-word; white-space: pre-wrap; }
+  .message-content a { color: #00a8fc; text-decoration: none; }
+  .message-content a:hover { text-decoration: underline; }
+  .mention { background: #3c4270; color: #c9cdfb; padding: 0 2px; border-radius: 3px; font-weight: 500; }
+  .inline { background: #2b2d31; padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 14px; }
+  .codeblock { background: #2b2d31; padding: 8px 12px; border-radius: 4px; font-family: monospace; font-size: 14px; overflow-x: auto; margin: 4px 0; white-space: pre-wrap; }
+  .embed { background: #2b2d31; border-radius: 4px; padding: 12px 16px; margin-top: 8px; max-width: 520px; }
+  .embed-grid { display: flex; gap: 12px; }
+  .embed-main { flex: 1; min-width: 0; }
+  .embed-author { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: #f2f3f5; margin-bottom: 4px; }
+  .embed-author-icon { width: 24px; height: 24px; border-radius: 50%; }
+  .embed-title { font-size: 16px; font-weight: 600; color: #f2f3f5; margin-bottom: 4px; }
+  .embed-desc { font-size: 14px; color: #dbdee1; margin-bottom: 8px; }
+  .embed-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .embed-field-name { font-size: 14px; font-weight: 600; color: #f2f3f5; margin-bottom: 2px; }
+  .embed-field-value { font-size: 14px; color: #dbdee1; }
+  .embed-thumb { width: 80px; height: 80px; border-radius: 4px; flex-shrink: 0; object-fit: cover; }
+  .embed-image { max-width: 100%; border-radius: 4px; margin-top: 8px; }
+  .embed-footer { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #949ba4; margin-top: 8px; }
+  .embed-footer-icon { width: 20px; height: 20px; border-radius: 50%; }
+  .attachment { margin-top: 6px; font-size: 14px; }
+  .attachment a { color: #00a8fc; text-decoration: none; }
+  .attachment-image { margin-top: 8px; }
+  .attachment-image img { max-width: 400px; max-height: 300px; border-radius: 4px; }
 </style>
 </head>
 <body>
@@ -1244,6 +1099,27 @@ client.on('interactionCreate', async (i) => {
     return;
   }
 
+  // ===== /refresh =====
+  if (i.isChatInputCommand() && i.commandName === 'refresh') {
+    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) {
+      return i.reply({
+        content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig om dit te doen.`,
+        ephemeral: true,
+      });
+    }
+
+    await i.deferReply({ ephemeral: true });
+
+    try {
+      await herstartOverzicht();
+      await i.editReply({ content: `Overzicht vernieuwd in <#${PURCHASE_LOG_CHANNEL_ID}>.` });
+    } catch (e) {
+      console.error('Refresh fout:', e);
+      await i.editReply({ content: `Fout: ${e.message}` });
+    }
+    return;
+  }
+
   // ===== Ticket categorie select =====
   if (i.isStringSelectMenu() && i.customId === 'ticket_category_select') {
     await i.deferReply({ ephemeral: true });
@@ -1553,6 +1429,9 @@ client.once('ready', async () => {
   console.log(`online als ${client.user.tag}`);
   startStatusInterval();
   startVervalInterval();
+
+  // Zorg dat overzicht 1 bericht is bij opstart
+  await herstartOverzicht();
   startOverzichtInterval();
 
   await setupVerify();
