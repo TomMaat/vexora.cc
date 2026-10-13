@@ -454,7 +454,29 @@ function startOverzichtInterval() {
   setInterval(updateOverzicht, 60000);
 }
 
-// ===== Verify + Prijslijst =====
+// ===== Kanaal schoonmaken (alle bot-berichten weg) =====
+async function clearBotMessages(channel) {
+  let laatsteId = null;
+  let doorzoeken = true;
+
+  while (doorzoeken) {
+    const opties = { limit: 100 };
+    if (laatsteId) opties.before = laatsteId;
+
+    const berichten = await channel.messages.fetch(opties);
+    if (berichten.size === 0) break;
+
+    const vanBot = berichten.filter(m => m.author.id === client.user.id);
+    for (const msg of vanBot.values()) {
+      await msg.delete().catch(() => {});
+    }
+
+    laatsteId = berichten.last().id;
+    if (berichten.size < 100) doorzoeken = false;
+  }
+}
+
+// ===== Verify =====
 async function setupVerify() {
   try {
     const channel = await client.channels.fetch(VERIFY_CHANNEL_ID);
@@ -463,13 +485,7 @@ async function setupVerify() {
       return;
     }
 
-    // Verwijder oude bot berichten in dit kanaal
-    const oude = await channel.messages.fetch({ limit: 50 });
-    for (const msg of oude.values()) {
-      if (msg.author.id === client.user.id) {
-        await msg.delete().catch(() => {});
-      }
-    }
+    await clearBotMessages(channel);
 
     const embed = new EmbedBuilder()
       .setTitle('Verificatie')
@@ -498,6 +514,7 @@ async function setupVerify() {
   }
 }
 
+// ===== Prijslijst =====
 async function setupPricing() {
   try {
     const channel = await client.channels.fetch(PRICING_CHANNEL_ID);
@@ -506,36 +523,55 @@ async function setupPricing() {
       return;
     }
 
-    // Verwijder oude bot berichten in dit kanaal
-    const oude = await channel.messages.fetch({ limit: 50 });
-    for (const msg of oude.values()) {
-      if (msg.author.id === client.user.id) {
-        await msg.delete().catch(() => {});
-      }
-    }
+    await clearBotMessages(channel);
 
-    const pricingText =
-      `# 💠 Vexora.cc Private\n\n` +
-      `💰 **Pricing**\n` +
-      `> 1 Day = **2.50 euro**\n` +
-      `> 1 Week = **7.50**\n` +
-      `> 1 Month = **20.00**\n` +
-      `> Lifetime = **60.00**\n\n` +
-      `🛡️ **Product**\n` +
-      `> • External Cheat\n` +
-      `> • Advanced bypass that removes all traces made by executing the cheat this passes all scans & manual checks.\n` +
-      `> • Daily Updates\n` +
-      `> • Easy to use interfaces\n` +
-      `> • 24/7 Support\n\n` +
-      `👨‍👨‍👧 **Group Deals**\n` +
-      `> • Duo = **30 per person**\n` +
-      `> • Trio = **20 per person**\n` +
-      `> • Squad = **15 per person**\n` +
-      `> • More? Ticket\n\n` +
-      `-# we dont sell to players who dont understand anything about bypassing this is a product specifically made for cheaters who know what they do\n\n` +
-      `||@everyone@here ||`;
+    const embed = new EmbedBuilder()
+      .setTitle('Vexora.cc Private')
+      .setColor(0x5865f2)
+      .setThumbnail(LOGO)
+      .setDescription(
+        '> Premium external cheat met advanced bypass.\n' +
+        '> Undetected. Daily updated. 24/7 support.'
+      )
+      .addFields(
+        {
+          name: '💰 Pricing',
+          value:
+            '```\n' +
+            '1 Day     →  €2.50\n' +
+            '1 Week    →  €7.50\n' +
+            '1 Month   →  €20.00\n' +
+            'Lifetime  →  €60.00\n' +
+            '```',
+          inline: false,
+        },
+        {
+          name: '🛡️ Product',
+          value:
+            '> • External Cheat\n' +
+            '> • Advanced bypass — removes all traces after execution, passes all scans & manual checks\n' +
+            '> • Daily Updates\n' +
+            '> • Easy to use interface\n' +
+            '> • 24/7 Support',
+          inline: false,
+        },
+        {
+          name: '👥 Group Deals',
+          value:
+            '```\n' +
+            'Duo    →  €30 per person\n' +
+            'Trio   →  €20 per person\n' +
+            'Squad  →  €15 per person\n' +
+            'More?  →  Open a ticket\n' +
+            '```',
+          inline: false,
+        }
+      )
+      .setImage(LOGO)
+      .setFooter({ text: 'Vexora.cc • We dont sell to players who dont understand bypassing', iconURL: LOGO })
+      .setTimestamp();
 
-    await channel.send({ content: pricingText });
+    await channel.send({ embeds: [embed] });
     console.log('Prijslijst geplaatst');
   } catch (e) {
     console.error('Kon prijslijst niet plaatsen:', e.message);
@@ -950,7 +986,6 @@ client.once('ready', async () => {
   startVervalInterval();
   startOverzichtInterval();
 
-  // Eenmalig verify + pricing opzetten
   await setupVerify();
   await setupPricing();
 });
