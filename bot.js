@@ -24,6 +24,7 @@ const REVIEW_CHANNEL_ID = '1559313542509887569';
 const REQUIRED_ROLE_ID = '1556357822998913094';
 const PURCHASE_ROLE_ID = '1559485646991654922';
 const PURCHASE_LOG_CHANNEL_ID = '1559485972440293386';
+const SUGGESTIE_CHANNEL_ID = '1557502689271619726';
 const PRODUCT = 'Vexora External + Bypass';
 const STATUS_INTERVAL = 8000;
 // =========================
@@ -105,6 +106,13 @@ const commands = [
       { name: 'key', description: 'De key/licentie voor de klant', type: 3, required: true },
     ],
   },
+  {
+    name: 'suggestie',
+    description: 'Plaats een suggestie',
+    options: [
+      { name: 'tekst', description: 'Wat is je suggestie?', type: 3, required: true },
+    ],
+  },
 ];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -140,6 +148,7 @@ async function leesGist() {
   return {
     counter: parsed.counter || 0,
     purchases: parsed.purchases || [],
+    suggestions: parsed.suggestions || {},
   };
 }
 
@@ -171,7 +180,7 @@ async function schrijfCounter(n) {
   await schrijfGist(data);
 }
 
-// ===== Purchase logica =====
+// ===== Purchase =====
 async function getPurchases() {
   const data = await leesGist();
   return data.purchases;
@@ -199,6 +208,53 @@ async function addPurchase(userId, plan, key) {
 
   await savePurchases(filtered);
   return { eindTijd, duur };
+}
+
+// ===== Suggestie =====
+async function getSuggestions() {
+  const data = await leesGist();
+  return data.suggestions;
+}
+
+async function saveSuggestions(suggestions) {
+  const data = await leesGist();
+  data.suggestions = suggestions;
+  await schrijfGist(data);
+}
+
+function buildSuggestieEmbed(s, messageId) {
+  const approveCount = s.approve.length;
+  const rejectCount = s.reject.length;
+
+  const embed = new EmbedBuilder()
+    .setTitle('Nieuwe Suggestie')
+    .setColor(0x5865f2)
+    .setThumbnail(LOGO)
+    .setDescription(s.tekst)
+    .addFields(
+      { name: 'Door', value: `<@${s.auteurId}>`, inline: true },
+      { name: 'Stemmen', value: `✅ ${approveCount}  •  ❌ ${rejectCount}`, inline: true }
+    )
+    .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+    .setTimestamp(s.gestart);
+
+  return embed;
+}
+
+function buildSuggestieRow(messageId, s) {
+  const approveBtn = new ButtonBuilder()
+    .setCustomId(`suggest_approve_${messageId}`)
+    .setLabel(`${s.approve.length}`)
+    .setEmoji('✅')
+    .setStyle(ButtonStyle.Success);
+
+  const rejectBtn = new ButtonBuilder()
+    .setCustomId(`suggest_reject_${messageId}`)
+    .setLabel(`${s.reject.length}`)
+    .setEmoji('❌')
+    .setStyle(ButtonStyle.Danger);
+
+  return new ActionRowBuilder().addComponents(approveBtn, rejectBtn);
 }
 
 // ===== Review nummer =====
@@ -415,6 +471,7 @@ function submitRow() {
 
 // ===== Interaction handler =====
 client.on('interactionCreate', async (i) => {
+  // ===== /review =====
   if (i.isChatInputCommand() && i.commandName === 'review') {
     if (i.channelId !== REVIEW_CHANNEL_ID) {
       return i.reply({
@@ -446,6 +503,7 @@ client.on('interactionCreate', async (i) => {
     });
   }
 
+  // ===== /purchase =====
   if (i.isChatInputCommand() && i.commandName === 'purchase') {
     if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) {
       return i.reply({
@@ -539,7 +597,102 @@ client.on('interactionCreate', async (i) => {
     return;
   }
 
+  // ===== /suggestie =====
+  if (i.isChatInputCommand() && i.commandName === 'suggestie') {
+    await i.deferReply({ ephemeral: true });
+
+    const tekst = i.options.getString('tekst');
+
+    try {
+      const kanaal = await client.channels.fetch(SUGGESTIE_CHANNEL_ID);
+
+      // Eerst een placeholder embed sturen om bericht-ID te krijgen
+      const placeholder = new EmbedBuilder()
+        .setTitle('Nieuwe Suggestie')
+        .setColor(0x5865f2)
+        .setThumbnail(LOGO)
+        .setDescription('Laden...')
+        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+        .setTimestamp();
+
+      const bericht = await kanaal.send({ embeds: [placeholder] });
+
+      // Nu opslaan in Gist met bericht-ID als key
+      const suggestions = await getSuggestions();
+      suggestions[bericht.id] = {
+        tekst,
+        auteurId: i.user.id,
+        approve: [],
+        reject: [],
+        gestart: Date.now(),
+      };
+      await saveSuggestions(suggestions);
+
+      // Echte embed + knoppen plaatsen
+      const s = suggestions[bericht.id];
+      await bericht.edit({
+        embeds: [buildSuggestieEmbed(s, bericht.id)],
+        components: [buildSuggestieRow(bericht.id, s)],
+      });
+
+      await i.editReply({ content: `Je suggestie is geplaatst in <#${SUGGESTIE_CHANNEL_ID}>.` });
+    } catch (e) {
+      console.error('Suggestie fout:', e);
+      await i.editReply({ content: `Fout: ${e.message}` });
+    }
+    return;
+  }
+
+  // ===== Buttons =====
   if (i.isButton()) {
+    // --- Suggestie buttons ---
+    if (i.customId.startsWith('suggest_approve_') || i.customId.startsWith('suggest_reject_')) {
+      const messageId = i.customId.split('_').pop();
+
+      // Rol check
+      if (!i.member.roles.cache.has(REQUIRED_ROLE_ID)) {
+        return i.reply({
+          content: `Je hebt de <@&${REQUIRED_ROLE_ID}> rol nodig om te stemmen.`,
+          ephemeral: true,
+        });
+      }
+
+      try {
+        const suggestions = await getSuggestions();
+        const s = suggestions[messageId];
+
+        if (!s) {
+          return i.reply({ content: 'Deze suggestie bestaat niet meer.', ephemeral: true });
+        }
+
+        const isApprove = i.customId.startsWith('suggest_approve_');
+        const userId = i.user.id;
+
+        // Verwijder user uit beide lijsten (zodat stem gewisseld kan worden)
+        s.approve = s.approve.filter(id => id !== userId);
+        s.reject = s.reject.filter(id => id !== userId);
+
+        if (isApprove) {
+          s.approve.push(userId);
+        } else {
+          s.reject.push(userId);
+        }
+
+        await saveSuggestions(suggestions);
+
+        // Update embed + knoppen
+        await i.update({
+          embeds: [buildSuggestieEmbed(s, messageId)],
+          components: [buildSuggestieRow(messageId, s)],
+        });
+      } catch (e) {
+        console.error('Suggestie stem fout:', e);
+        await i.reply({ content: `Fout: ${e.message}`, ephemeral: true });
+      }
+      return;
+    }
+
+    // --- Review buttons ---
     const review = reviews.get(i.user.id);
     if (!review) {
       return i.reply({ content: 'Deze review is verlopen. Gebruik /review opnieuw.', ephemeral: true });
