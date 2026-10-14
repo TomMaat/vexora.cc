@@ -13,6 +13,7 @@ const {
   REST,
   Routes,
 } = require('discord.js');
+const { joinVoiceChannel, getVoiceConnection } = require('@discordjs/voice');
 const http = require('http');
 
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -37,6 +38,7 @@ const TICKET_SUPPORT_ROLE_ID = '1554510750092099688';
 const TICKET_TRANSCRIPT_CHANNEL_ID = '1554510754852511845';
 const LEGIT_CHANNEL_ID = '1559585421489344513';
 const VOTE_LOG_CHANNEL_ID = '1559588394336653332';
+const VOICE_CHANNEL_ID = '1554510753669709876';
 const PRODUCT = 'Vexora External + Bypass';
 const STATUS_INTERVAL = 8000;
 
@@ -494,6 +496,61 @@ async function checkRolVerval() {
 function startVervalInterval() {
   checkRolVerval();
   setInterval(checkRolVerval, 60000);
+}
+
+// ===== Voice =====
+async function joinVoice() {
+  try {
+    const channel = await client.channels.fetch(VOICE_CHANNEL_ID);
+    if (!channel || !channel.isVoiceBased()) {
+      console.error('Voice kanaal niet gevonden of is geen voice kanaal');
+      return;
+    }
+
+    const guild = channel.guild;
+    const me = guild.members.me;
+
+    // Al verbonden? Zorg dat mute/deaf aan staan
+    if (me && me.voice && me.voice.channelId === VOICE_CHANNEL_ID) {
+      if (!me.voice.selfMute) await me.voice.setSelfMute(true).catch(() => {});
+      if (!me.voice.selfDeaf) await me.voice.setSelfDeaf(true).catch(() => {});
+      return;
+    }
+
+    // Oude connectie opruimen
+    const bestaand = getVoiceConnection(guild.id);
+    if (bestaand) {
+      try { bestaand.destroy(); } catch (e) {}
+    }
+
+    joinVoiceChannel({
+      channelId: VOICE_CHANNEL_ID,
+      guildId: guild.id,
+      adapterCreator: guild.voiceAdapterCreator,
+      selfMute: true,
+      selfDeaf: true,
+    });
+
+    console.log(`🔇 Verbonden met voice kanaal ${channel.name} (mute + deaf)`);
+  } catch (e) {
+    console.error('Kon niet joinen in voice:', e.message);
+    setTimeout(joinVoice, 10000);
+  }
+}
+
+function startVoiceInterval() {
+  // Check elke 30 seconden of we nog in het kanaal zitten
+  setInterval(async () => {
+    try {
+      const guild = await client.guilds.fetch(GUILD_ID);
+      const me = guild.members.me;
+      if (!me || !me.voice || me.voice.channelId !== VOICE_CHANNEL_ID) {
+        await joinVoice();
+      }
+    } catch (e) {
+      console.error('Voice check fout:', e.message);
+    }
+  }, 30000);
 }
 
 // ===== Kanaal schoonmaken =====
@@ -1340,7 +1397,7 @@ client.on('interactionCreate', async (i) => {
         .setColor(0xff4444)
         .setThumbnail(LOGO)
         .addFields(
-          { name: 'Verwijderd', value: `${teVerwijderen}`, inline: true },
+          { name: 'Verwijderd', value: `${teVerwijderd}`, inline: true },
           { name: 'Resterend ❌', value: `${votes.reject.length}`, inline: true },
           { name: 'Totaal ✅', value: `${votes.approve.length}`, inline: true }
         )
@@ -1704,6 +1761,31 @@ client.on('channelDelete', async (channel) => {
   }
 });
 
+// ===== Voice state: opnieuw joinen als we gekickt worden =====
+client.on('voiceStateUpdate', async (oldState, newState) => {
+  if (newState.id !== client.user.id) return;
+
+  const wasIn = oldState.channelId === VOICE_CHANNEL_ID;
+  const isIn = newState.channelId === VOICE_CHANNEL_ID;
+
+  // We zijn weggehaald uit het kanaal → opnieuw joinen
+  if (wasIn && !isIn) {
+    console.log('Uit voice kanaal gehaald — opnieuw verbinden...');
+    setTimeout(joinVoice, 3000);
+    return;
+  }
+
+  // We zijn in het kanaal — zorg dat mute + deaf aan staan
+  if (isIn) {
+    try {
+      if (!newState.selfMute) await newState.setSelfMute(true).catch(() => {});
+      if (!newState.selfDeaf) await newState.setSelfDeaf(true).catch(() => {});
+    } catch (e) {
+      // stil falen
+    }
+  }
+});
+
 client.once('ready', async () => {
   console.log(`online als ${client.user.tag}`);
   startStatusInterval();
@@ -1716,6 +1798,9 @@ client.once('ready', async () => {
   await setupPricing();
   await setupTicketPanel();
   await setupLegitPoll();
+
+  await joinVoice();
+  startVoiceInterval();
 });
 
 client.login(TOKEN);
