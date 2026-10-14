@@ -166,6 +166,13 @@ const commands = [
       { name: 'time', description: 'Duur (bijv. 30s, 5m, 1h, 1d, 1w)', type: 3, required: true },
     ],
   },
+  {
+    name: 'reroll',
+    description: 'Trek opnieuw winnaars voor de laatste giveaway in dit kanaal',
+    options: [
+      { name: 'winners', description: 'Aantal nieuwe winnaars', type: 4, required: true, min_value: 1, max_value: 50 },
+    ],
+  },
 ];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -194,6 +201,7 @@ async function leesGist() {
     legitVotes: parsed.legitVotes || { approve: [], reject: [] },
     legitMessageId: parsed.legitMessageId || null,
     giveaways: parsed.giveaways || {},
+    laatsteGiveaways: parsed.laatsteGiveaways || {},
   };
 }
 
@@ -473,6 +481,8 @@ function startOverzichtInterval() {
 // ===== Giveaway =====
 async function getGiveaways() { const d = await leesGist(); return d.giveaways; }
 async function saveGiveaways(g) { const d = await leesGist(); d.giveaways = g; await schrijfGist(d); }
+async function getLaatsteGiveaways() { const d = await leesGist(); return d.laatsteGiveaways; }
+async function saveLaatsteGiveaways(l) { const d = await leesGist(); d.laatsteGiveaways = l; await schrijfGist(d); }
 
 function buildGiveawayEmbed(g) {
   return new EmbedBuilder()
@@ -489,22 +499,39 @@ function buildGiveawayEmbed(g) {
     .setTimestamp(g.gestart);
 }
 
-function buildGiveawayEndedEmbed(g, winnaars) {
+function buildGiveawayEndedEmbed(g, winnaars, isReroll = false) {
   let winnaarTekst = 'Geen deelnemers';
   if (winnaars.length > 0) {
     winnaarTekst = winnaars.map(id => `<@${id}>`).join(', ');
   }
   return new EmbedBuilder()
-    .setTitle('🎉 Giveaway Afgelopen 🎉')
+    .setTitle(isReroll ? '🎉 Giveaway Rerolled 🎉' : '🎉 Giveaway Afgelopen 🎉')
     .setColor(0x00ff88)
     .setThumbnail(LOGO)
     .setDescription(
       `**Prijs:** ${g.item}\n` +
-      `**Winnaars:** ${winnaarTekst}\n\n` +
+      `**${isReroll ? 'Nieuwe winnaars' : 'Winnaars'}:** ${winnaarTekst}\n\n` +
       `Gefeliciteerd! 🎊`
     )
     .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
     .setTimestamp();
+}
+
+async function kiesWinnaars(bericht, aantal) {
+  const reaction = bericht.reactions.cache.get('🎉');
+  let deelnemers = [];
+  if (reaction) {
+    const users = await reaction.users.fetch();
+    deelnemers = users.filter(u => !u.bot).map(u => u.id);
+  }
+  const winnaars = [];
+  const pool = [...deelnemers];
+  const n = Math.min(aantal, pool.length);
+  for (let k = 0; k < n; k++) {
+    const idx = Math.floor(Math.random() * pool.length);
+    winnaars.push(pool.splice(idx, 1)[0]);
+  }
+  return { winnaars, totaalDeelnemers: deelnemers.length };
 }
 
 async function eindigGiveaway(messageId, kanaalId) {
@@ -527,33 +554,15 @@ async function eindigGiveaway(messageId, kanaalId) {
       return;
     }
 
-    // Verzamel deelnemers uit 🎉 reacties
-    const reaction = msg.reactions.cache.get('🎉');
-    let deelnemers = [];
-    if (reaction) {
-      const users = await reaction.users.fetch();
-      deelnemers = users.filter(u => !u.bot).map(u => u.id);
-    }
+    const { winnaars } = await kiesWinnaars(msg, g.winners);
 
-    // Kies winnaars
-    const winnaars = [];
-    const pool = [...deelnemers];
-    const aantal = Math.min(g.winners, pool.length);
-    for (let k = 0; k < aantal; k++) {
-      const idx = Math.floor(Math.random() * pool.length);
-      winnaars.push(pool.splice(idx, 1)[0]);
-    }
+    await msg.edit({ embeds: [buildGiveawayEndedEmbed(g, winnaars, false)] }).catch(() => {});
 
-    // Update embed
-    await msg.edit({ embeds: [buildGiveawayEndedEmbed(g, winnaars)] }).catch(() => {});
-
-    // Announcement
     if (winnaars.length > 0) {
       await channel.send({
         content: `🎉 Gefeliciteerd ${winnaars.map(id => `<@${id}>`).join(', ')}! Jullie hebben **${g.item}** gewonnen!`,
       }).catch(() => {});
 
-      // DM naar winnaars
       for (const id of winnaars) {
         try {
           const user = await client.users.fetch(id);
@@ -574,7 +583,17 @@ async function eindigGiveaway(messageId, kanaalId) {
       await channel.send({ content: `😢 Niemand heeft meegedaan aan de giveaway voor **${g.item}**.` }).catch(() => {});
     }
 
-    // Verwijder uit storage
+    // Bewaar laatste giveaway per kanaal voor /reroll
+    const laatste = await getLaatsteGiveaways();
+    laatste[kanaalId] = {
+      messageId,
+      item: g.item,
+      winners: g.winners,
+      kanaalId,
+      geeindigd: Date.now(),
+    };
+    await saveLaatsteGiveaways(laatste);
+
     delete giveaways[messageId];
     await saveGiveaways(giveaways);
   } catch (e) {
@@ -1074,6 +1093,94 @@ client.on('interactionCreate', async (i) => {
       await i.editReply({ embeds: [bevestiging] });
     } catch (e) {
       console.error('Giveaway fout:', e);
+      await i.editReply({ content: `Fout: ${e.message}` });
+    }
+    return;
+  }
+
+  // /reroll — ALLEEN VOOR TICKET SUPPORT ROL
+  if (i.isChatInputCommand() && i.commandName === 'reroll') {
+    if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
+      return i.reply({
+        content: `Je hebt de <@&${TICKET_SUPPORT_ROLE_ID}> rol nodig om te rerollen.`,
+        ephemeral: true,
+      });
+    }
+
+    await i.deferReply();
+
+    const aantal = i.options.getInteger('winners');
+
+    try {
+      const laatste = await getLaatsteGiveaways();
+      const info = laatste[i.channelId];
+
+      if (!info) {
+        return i.editReply({
+          content: '⚠️ Er is geen afgelopen giveaway gevonden in dit kanaal om te rerollen.',
+        });
+      }
+
+      const channel = await client.channels.fetch(i.channelId);
+      if (!channel) return i.editReply({ content: 'Kanaal niet gevonden.' });
+
+      const msg = await channel.messages.fetch(info.messageId).catch(() => null);
+      if (!msg) {
+        return i.editReply({
+          content: '⚠️ Het originele giveaway-bericht bestaat niet meer, kan niet rerollen.',
+        });
+      }
+
+      const { winnaars, totaalDeelnemers } = await kiesWinnaars(msg, aantal);
+
+      if (totaalDeelnemers === 0) {
+        return i.editReply({
+          content: '⚠️ Er zijn geen deelnemers om uit te kiezen.',
+        });
+      }
+
+      const g = { item: info.item, winners: aantal };
+
+      await msg.edit({ embeds: [buildGiveawayEndedEmbed(g, winnaars, true)] }).catch(() => {});
+
+      if (winnaars.length > 0) {
+        await channel.send({
+          content: `🎉 **Reroll!** Gefeliciteerd ${winnaars.map(id => `<@${id}>`).join(', ')}! Jullie hebben **${info.item}** gewonnen!`,
+        }).catch(() => {});
+
+        for (const id of winnaars) {
+          try {
+            const user = await client.users.fetch(id);
+            await user.send({
+              embeds: [
+                new EmbedBuilder()
+                  .setTitle('🎉 Je hebt een giveaway gewonnen!')
+                  .setColor(0x00ff88)
+                  .setThumbnail(LOGO)
+                  .setDescription(`Gefeliciteerd! Je hebt **${info.item}** gewonnen in de reroll van **Vexora.cc**!`)
+                  .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+                  .setTimestamp(),
+              ],
+            });
+          } catch (e) {}
+        }
+      }
+
+      const bevestiging = new EmbedBuilder()
+        .setTitle('Reroll Voltooid')
+        .setColor(0x00ff88)
+        .setThumbnail(LOGO)
+        .addFields(
+          { name: 'Prijs', value: info.item, inline: true },
+          { name: 'Nieuwe winnaars', value: `${winnaars.length}`, inline: true },
+          { name: 'Totaal deelnemers', value: `${totaalDeelnemers}`, inline: true }
+        )
+        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+        .setTimestamp();
+
+      await i.editReply({ embeds: [bevestiging] });
+    } catch (e) {
+      console.error('Reroll fout:', e);
       await i.editReply({ content: `Fout: ${e.message}` });
     }
     return;
