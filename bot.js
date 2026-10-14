@@ -94,6 +94,30 @@ function formatResterend(eindTijd) {
   return `${minuten}m`;
 }
 
+// ===== Giveaway tijd parsen =====
+function parseGiveawayTime(input) {
+  const match = String(input).trim().toLowerCase().match(/^(\d+)\s*(s|m|h|d|w)$/);
+  if (!match) return null;
+  const n = parseInt(match[1]);
+  const unit = match[2];
+  const multipliers = {
+    s: 1000,
+    m: 60 * 1000,
+    h: 60 * 60 * 1000,
+    d: 24 * 60 * 60 * 1000,
+    w: 7 * 24 * 60 * 60 * 1000,
+  };
+  return n * multipliers[unit];
+}
+
+function formatGiveawayDuur(ms) {
+  if (ms >= 7 * 24 * 60 * 60 * 1000) return `${Math.round(ms / (7*24*60*60*1000))}w`;
+  if (ms >= 24 * 60 * 60 * 1000) return `${Math.round(ms / (24*60*60*1000))}d`;
+  if (ms >= 60 * 60 * 1000) return `${Math.round(ms / (60*60*1000))}h`;
+  if (ms >= 60 * 1000) return `${Math.round(ms / (60*1000))}m`;
+  return `${Math.round(ms / 1000)}s`;
+}
+
 // ===== Commands =====
 const commands = [
   {
@@ -133,6 +157,15 @@ const commands = [
     description: 'Verwijder een aantal kruisjes (❌) van de legit poll',
     options: [{ name: 'aantal', description: 'Hoeveel kruisjes wil je verwijderen?', type: 4, required: true, min_value: 1 }],
   },
+  {
+    name: 'giveaway',
+    description: 'Start een giveaway',
+    options: [
+      { name: 'winners', description: 'Aantal winnaars', type: 4, required: true, min_value: 1, max_value: 50 },
+      { name: 'item', description: 'Wat is de prijs?', type: 3, required: true },
+      { name: 'time', description: 'Duur (bijv. 30s, 5m, 1h, 1d, 1w)', type: 3, required: true },
+    ],
+  },
 ];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -160,6 +193,7 @@ async function leesGist() {
     overzichtMessageId: parsed.overzichtMessageId || null,
     legitVotes: parsed.legitVotes || { approve: [], reject: [] },
     legitMessageId: parsed.legitMessageId || null,
+    giveaways: parsed.giveaways || {},
   };
 }
 
@@ -434,6 +468,134 @@ async function herstartOverzicht() {
 function startOverzichtInterval() {
   updateOverzicht();
   setInterval(updateOverzicht, 60000);
+}
+
+// ===== Giveaway =====
+async function getGiveaways() { const d = await leesGist(); return d.giveaways; }
+async function saveGiveaways(g) { const d = await leesGist(); d.giveaways = g; await schrijfGist(d); }
+
+function buildGiveawayEmbed(g) {
+  return new EmbedBuilder()
+    .setTitle('🎉 Giveaway 🎉')
+    .setColor(0xff73fa)
+    .setThumbnail(LOGO)
+    .setDescription(
+      `**Prijs:** ${g.item}\n` +
+      `**Winnaars:** ${g.winners}\n` +
+      `**Eindigt:** <t:${Math.floor(g.eindTijd / 1000)}:R>\n\n` +
+      `Reageer met 🎉 om mee te doen!`
+    )
+    .setFooter({ text: `Vexora.cc • Gehost door ${g.hostTag || 'onbekend'}`, iconURL: LOGO })
+    .setTimestamp(g.gestart);
+}
+
+function buildGiveawayEndedEmbed(g, winnaars) {
+  let winnaarTekst = 'Geen deelnemers';
+  if (winnaars.length > 0) {
+    winnaarTekst = winnaars.map(id => `<@${id}>`).join(', ');
+  }
+  return new EmbedBuilder()
+    .setTitle('🎉 Giveaway Afgelopen 🎉')
+    .setColor(0x00ff88)
+    .setThumbnail(LOGO)
+    .setDescription(
+      `**Prijs:** ${g.item}\n` +
+      `**Winnaars:** ${winnaarTekst}\n\n` +
+      `Gefeliciteerd! 🎊`
+    )
+    .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+    .setTimestamp();
+}
+
+async function eindigGiveaway(messageId, kanaalId) {
+  try {
+    const giveaways = await getGiveaways();
+    const g = giveaways[messageId];
+    if (!g) return;
+
+    const channel = await client.channels.fetch(kanaalId).catch(() => null);
+    if (!channel) {
+      delete giveaways[messageId];
+      await saveGiveaways(giveaways);
+      return;
+    }
+
+    const msg = await channel.messages.fetch(messageId).catch(() => null);
+    if (!msg) {
+      delete giveaways[messageId];
+      await saveGiveaways(giveaways);
+      return;
+    }
+
+    // Verzamel deelnemers uit 🎉 reacties
+    const reaction = msg.reactions.cache.get('🎉');
+    let deelnemers = [];
+    if (reaction) {
+      const users = await reaction.users.fetch();
+      deelnemers = users.filter(u => !u.bot).map(u => u.id);
+    }
+
+    // Kies winnaars
+    const winnaars = [];
+    const pool = [...deelnemers];
+    const aantal = Math.min(g.winners, pool.length);
+    for (let k = 0; k < aantal; k++) {
+      const idx = Math.floor(Math.random() * pool.length);
+      winnaars.push(pool.splice(idx, 1)[0]);
+    }
+
+    // Update embed
+    await msg.edit({ embeds: [buildGiveawayEndedEmbed(g, winnaars)] }).catch(() => {});
+
+    // Announcement
+    if (winnaars.length > 0) {
+      await channel.send({
+        content: `🎉 Gefeliciteerd ${winnaars.map(id => `<@${id}>`).join(', ')}! Jullie hebben **${g.item}** gewonnen!`,
+      }).catch(() => {});
+
+      // DM naar winnaars
+      for (const id of winnaars) {
+        try {
+          const user = await client.users.fetch(id);
+          await user.send({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle('🎉 Je hebt een giveaway gewonnen!')
+                .setColor(0x00ff88)
+                .setThumbnail(LOGO)
+                .setDescription(`Gefeliciteerd! Je hebt **${g.item}** gewonnen in de giveaway van **Vexora.cc**!`)
+                .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+                .setTimestamp(),
+            ],
+          });
+        } catch (e) {}
+      }
+    } else {
+      await channel.send({ content: `😢 Niemand heeft meegedaan aan de giveaway voor **${g.item}**.` }).catch(() => {});
+    }
+
+    // Verwijder uit storage
+    delete giveaways[messageId];
+    await saveGiveaways(giveaways);
+  } catch (e) {
+    console.error('Eindig giveaway fout:', e.message);
+  }
+}
+
+async function herstelGiveaways() {
+  try {
+    const giveaways = await getGiveaways();
+    const nu = Date.now();
+    for (const [messageId, g] of Object.entries(giveaways)) {
+      const over = g.eindTijd - nu;
+      if (over <= 0) {
+        await eindigGiveaway(messageId, g.kanaalId);
+      } else {
+        setTimeout(() => eindigGiveaway(messageId, g.kanaalId), over);
+        console.log(`Giveaway hersteld: ${g.item} (eindigt over ${formatGiveawayDuur(over)})`);
+      }
+    }
+  } catch (e) { console.error('Kon giveaways niet herstellen:', e.message); }
 }
 
 // ===== Transcript =====
@@ -849,6 +1011,74 @@ client.on('interactionCreate', async (i) => {
     return;
   }
 
+  // /giveaway — ALLEEN VOOR TICKET SUPPORT ROL
+  if (i.isChatInputCommand() && i.commandName === 'giveaway') {
+    if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
+      return i.reply({
+        content: `Je hebt de <@&${TICKET_SUPPORT_ROLE_ID}> rol nodig om een giveaway te starten.`,
+        ephemeral: true,
+      });
+    }
+
+    await i.deferReply();
+
+    const winners = i.options.getInteger('winners');
+    const item = i.options.getString('item');
+    const timeStr = i.options.getString('time');
+    const duurMs = parseGiveawayTime(timeStr);
+
+    if (!duurMs || duurMs < 10 * 1000) {
+      return i.editReply({ content: '⚠️ Ongeldige tijd. Gebruik formaat zoals `30s`, `5m`, `1h`, `1d`, `1w` (minimaal 10s).' });
+    }
+    if (duurMs > 30 * 24 * 60 * 60 * 1000) {
+      return i.editReply({ content: '⚠️ Maximale duur is 30 dagen.' });
+    }
+
+    try {
+      const eindTijd = Date.now() + duurMs;
+      const giveaways = await getGiveaways();
+
+      const giveawayData = {
+        item,
+        winners,
+        eindTijd,
+        gestart: Date.now(),
+        kanaalId: i.channelId,
+        hostId: i.user.id,
+        hostTag: i.user.username,
+      };
+
+      const embed = buildGiveawayEmbed(giveawayData);
+      const msg = await i.channel.send({ embeds: [embed] });
+      await msg.react('🎉');
+
+      giveawayData.messageId = msg.id;
+      giveaways[msg.id] = giveawayData;
+      await saveGiveaways(giveaways);
+
+      setTimeout(() => eindigGiveaway(msg.id, i.channelId), duurMs);
+
+      const bevestiging = new EmbedBuilder()
+        .setTitle('Giveaway Gestart')
+        .setColor(0x00ff88)
+        .setThumbnail(LOGO)
+        .addFields(
+          { name: 'Prijs', value: item, inline: true },
+          { name: 'Winnaars', value: `${winners}`, inline: true },
+          { name: 'Duur', value: formatGiveawayDuur(duurMs), inline: true },
+          { name: 'Eindigt', value: `<t:${Math.floor(eindTijd / 1000)}:F> (<t:${Math.floor(eindTijd / 1000)}:R>)`, inline: false }
+        )
+        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+        .setTimestamp();
+
+      await i.editReply({ embeds: [bevestiging] });
+    } catch (e) {
+      console.error('Giveaway fout:', e);
+      await i.editReply({ content: `Fout: ${e.message}` });
+    }
+    return;
+  }
+
   // Ticket categorie select
   if (i.isStringSelectMenu() && i.customId === 'ticket_category_select') {
     await i.deferReply({ ephemeral: true });
@@ -1034,6 +1264,8 @@ client.once('ready', async () => {
   await setupPricing();
   await setupTicketPanel();
   await setupLegitPoll();
+
+  await herstelGiveaways();
 });
 
 client.login(TOKEN);
