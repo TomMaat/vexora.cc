@@ -173,6 +173,13 @@ const commands = [
       { name: 'winners', description: 'Aantal nieuwe winnaars', type: 4, required: true, min_value: 1, max_value: 50 },
     ],
   },
+  {
+    name: 'clear',
+    description: 'Verwijder een aantal berichten uit dit kanaal',
+    options: [
+      { name: 'aantal', description: 'Aantal berichten (1-100)', type: 4, required: true, min_value: 1, max_value: 100 },
+    ],
+  },
 ];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -583,7 +590,6 @@ async function eindigGiveaway(messageId, kanaalId) {
       await channel.send({ content: `😢 Niemand heeft meegedaan aan de giveaway voor **${g.item}**.` }).catch(() => {});
     }
 
-    // Bewaar laatste giveaway per kanaal voor /reroll
     const laatste = await getLaatsteGiveaways();
     laatste[kanaalId] = {
       messageId,
@@ -1182,6 +1188,57 @@ client.on('interactionCreate', async (i) => {
     } catch (e) {
       console.error('Reroll fout:', e);
       await i.editReply({ content: `Fout: ${e.message}` });
+    }
+    return;
+  }
+
+  // /clear — ALLEEN VOOR TICKET SUPPORT ROL
+  if (i.isChatInputCommand() && i.commandName === 'clear') {
+    if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
+      return i.reply({
+        content: `Je hebt de <@&${TICKET_SUPPORT_ROLE_ID}> rol nodig om berichten te verwijderen.`,
+        ephemeral: true,
+      });
+    }
+
+    await i.deferReply({ ephemeral: true });
+
+    const aantal = i.options.getInteger('aantal');
+
+    try {
+      const deleted = await i.channel.bulkDelete(aantal, true);
+
+      const embed = new EmbedBuilder()
+        .setTitle('Berichten Verwijderd')
+        .setColor(0xff4444)
+        .setThumbnail(LOGO)
+        .addFields(
+          { name: 'Verwijderd', value: `${deleted.size}`, inline: true },
+          { name: 'Kanaal', value: `<#${i.channelId}>`, inline: true },
+          { name: 'Door', value: `<@${i.user.id}>`, inline: true }
+        )
+        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+        .setTimestamp();
+
+      await i.editReply({ embeds: [embed] });
+
+      // Optioneel: log in VOTE_LOG_CHANNEL
+      try {
+        const logChannel = await client.channels.fetch(VOTE_LOG_CHANNEL_ID);
+        if (logChannel) {
+          const logEmbed = new EmbedBuilder()
+            .setColor(0xff4444)
+            .setDescription(`🧹 <@${i.user.id}> heeft **${deleted.size}** bericht(en) verwijderd in <#${i.channelId}>.`)
+            .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+            .setTimestamp();
+          await logChannel.send({ embeds: [logEmbed] });
+        }
+      } catch (e) {}
+    } catch (e) {
+      console.error('Clear fout:', e);
+      await i.editReply({
+        content: `Fout: ${e.message}\n\nLet op: berichten ouder dan 14 dagen kunnen niet in bulk verwijderd worden.`,
+      });
     }
     return;
   }
