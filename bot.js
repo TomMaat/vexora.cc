@@ -13,7 +13,15 @@ const {
   REST,
   Routes,
 } = require('discord.js');
-const { joinVoiceChannel, getVoiceConnection } = require('@discordjs/voice');
+const {
+  joinVoiceChannel,
+  getVoiceConnection,
+  createAudioPlayer,
+  createAudioResource,
+  VoiceConnectionStatus,
+  entersState,
+} = require('@discordjs/voice');
+const { Readable } = require('stream');
 const http = require('http');
 
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -49,10 +57,20 @@ const TICKET_CATEGORIES = {
 };
 // =========================
 
+// ===== HTTP server + keep-alive =====
 http.createServer((req, res) => {
   res.writeHead(200);
   res.end('ok');
 }).listen(PORT);
+
+// Interne self-ping (cron-job.org doet de externe ping)
+const SELF_URL = process.env.RENDER_EXTERNAL_URL;
+if (SELF_URL) {
+  setInterval(() => {
+    fetch(SELF_URL).catch(() => {});
+  }, 12 * 60 * 1000);
+  console.log(`Keep-alive self-ping gestart voor ${SELF_URL}`);
+}
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
@@ -71,9 +89,7 @@ const PLANS = {
   'lifetime': null,
 };
 
-function planDuurMs(plan) {
-  return PLANS[plan];
-}
+function planDuurMs(plan) { return PLANS[plan]; }
 
 function formatDuur(ms) {
   if (ms === null) return 'Lifetime';
@@ -112,10 +128,7 @@ const commands = [
     options: [
       { name: 'user', description: 'De gebruiker', type: 6, required: true },
       {
-        name: 'plan',
-        description: 'Welk plan',
-        type: 3,
-        required: true,
+        name: 'plan', description: 'Welk plan', type: 3, required: true,
         choices: [
           { name: '1 dag', value: '1 dag' },
           { name: '1 week', value: '1 week' },
@@ -129,32 +142,19 @@ const commands = [
   {
     name: 'removelicense',
     description: 'Verwijder de actieve licentie van een gebruiker',
-    options: [
-      { name: 'user', description: 'De gebruiker', type: 6, required: true },
-    ],
+    options: [{ name: 'user', description: 'De gebruiker', type: 6, required: true }],
   },
   {
     name: 'suggestie',
     description: 'Plaats een suggestie',
-    options: [
-      { name: 'tekst', description: 'Wat is je suggestie?', type: 3, required: true },
-    ],
+    options: [{ name: 'tekst', description: 'Wat is je suggestie?', type: 3, required: true }],
   },
-  {
-    name: 'refresh',
-    description: 'Plaats het overzicht opnieuw',
-  },
+  { name: 'refresh', description: 'Plaats het overzicht opnieuw' },
   {
     name: 'removekruis',
     description: 'Verwijder een aantal kruisjes (❌) van de legit poll',
     options: [
-      {
-        name: 'aantal',
-        description: 'Hoeveel kruisjes wil je verwijderen?',
-        type: 4, // INTEGER
-        required: true,
-        min_value: 1,
-      },
+      { name: 'aantal', description: 'Hoeveel kruisjes wil je verwijderen?', type: 4, required: true, min_value: 1 },
     ],
   },
 ];
@@ -165,30 +165,20 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     console.log('global commands wissen...');
     await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
-
     console.log('guild commands registreren...');
-    await rest.put(
-      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-      { body: commands }
-    );
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
     console.log('commands geladen');
-  } catch (e) {
-    console.error(e);
-  }
+  } catch (e) { console.error(e); }
 })();
 
 // ===== Gist storage =====
 async function leesGist() {
   const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
-    headers: {
-      Authorization: `Bearer ${GITHUB_TOKEN}`,
-      Accept: 'application/vnd.github+json',
-    },
+    headers: { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' },
   });
   if (!res.ok) throw new Error(`Gist read faalde: ${res.status}`);
   const data = await res.json();
-  const content = data.files['reviews.json'].content;
-  const parsed = JSON.parse(content);
+  const parsed = JSON.parse(data.files['reviews.json'].content);
   return {
     counter: parsed.counter || 0,
     purchases: parsed.purchases || [],
@@ -208,52 +198,24 @@ async function schrijfGist(data) {
       Accept: 'application/vnd.github+json',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      files: {
-        'reviews.json': { content: JSON.stringify(data, null, 2) },
-      },
-    }),
+    body: JSON.stringify({ files: { 'reviews.json': { content: JSON.stringify(data, null, 2) } } }),
   });
   if (!res.ok) throw new Error(`Gist write faalde: ${res.status}`);
 }
 
-async function leesCounter() {
-  const data = await leesGist();
-  return data.counter;
-}
-
-async function schrijfCounter(n) {
-  const data = await leesGist();
-  data.counter = n;
-  await schrijfGist(data);
-}
+async function leesCounter() { const d = await leesGist(); return d.counter; }
+async function schrijfCounter(n) { const d = await leesGist(); d.counter = n; await schrijfGist(d); }
 
 // ===== Purchase =====
-async function getPurchases() {
-  const data = await leesGist();
-  return data.purchases;
-}
-
-async function savePurchases(purchases) {
-  const data = await leesGist();
-  data.purchases = purchases;
-  await schrijfGist(data);
-}
+async function getPurchases() { const d = await leesGist(); return d.purchases; }
+async function savePurchases(p) { const d = await leesGist(); d.purchases = p; await schrijfGist(d); }
 
 async function addPurchase(userId, plan, key) {
   const purchases = await getPurchases();
   const duur = planDuurMs(plan);
   const eindTijd = duur === null ? null : Date.now() + duur;
-
   const filtered = purchases.filter(p => p.userId !== userId);
-  filtered.push({
-    userId,
-    plan,
-    key,
-    eindTijd,
-    gestart: Date.now(),
-  });
-
+  filtered.push({ userId, plan, key, eindTijd, gestart: Date.now() });
   await savePurchases(filtered);
   return { eindTijd, duur };
 }
@@ -266,21 +228,10 @@ async function removePurchase(userId) {
 }
 
 // ===== Suggestie =====
-async function getSuggestions() {
-  const data = await leesGist();
-  return data.suggestions;
-}
-
-async function saveSuggestions(suggestions) {
-  const data = await leesGist();
-  data.suggestions = suggestions;
-  await schrijfGist(data);
-}
+async function getSuggestions() { const d = await leesGist(); return d.suggestions; }
+async function saveSuggestions(s) { const d = await leesGist(); d.suggestions = s; await schrijfGist(d); }
 
 function buildSuggestieEmbed(s) {
-  const approveCount = s.approve.length;
-  const rejectCount = s.reject.length;
-
   return new EmbedBuilder()
     .setTitle('Nieuwe Suggestie')
     .setColor(0x5865f2)
@@ -288,48 +239,24 @@ function buildSuggestieEmbed(s) {
     .setDescription(s.tekst)
     .addFields(
       { name: 'Door', value: `<@${s.auteurId}>`, inline: true },
-      { name: 'Stemmen', value: `✅ ${approveCount}  •  ❌ ${rejectCount}`, inline: true }
+      { name: 'Stemmen', value: `✅ ${s.approve.length}  •  ❌ ${s.reject.length}`, inline: true }
     )
     .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
     .setTimestamp(s.gestart);
 }
 
 function buildSuggestieRow(messageId, s) {
-  const approveBtn = new ButtonBuilder()
-    .setCustomId(`suggest_approve_${messageId}`)
-    .setLabel(`✅ ${s.approve.length}`)
-    .setStyle(ButtonStyle.Secondary);
-
-  const rejectBtn = new ButtonBuilder()
-    .setCustomId(`suggest_reject_${messageId}`)
-    .setLabel(`❌ ${s.reject.length}`)
-    .setStyle(ButtonStyle.Secondary);
-
-  return new ActionRowBuilder().addComponents(approveBtn, rejectBtn);
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`suggest_approve_${messageId}`).setLabel(`✅ ${s.approve.length}`).setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`suggest_reject_${messageId}`).setLabel(`❌ ${s.reject.length}`).setStyle(ButtonStyle.Secondary)
+  );
 }
 
 // ===== Legit poll =====
-async function getLegitVotes() {
-  const data = await leesGist();
-  return data.legitVotes;
-}
-
-async function saveLegitVotes(votes) {
-  const data = await leesGist();
-  data.legitVotes = votes;
-  await schrijfGist(data);
-}
-
-async function getLegitMessageId() {
-  const data = await leesGist();
-  return data.legitMessageId;
-}
-
-async function setLegitMessageId(id) {
-  const data = await leesGist();
-  data.legitMessageId = id;
-  await schrijfGist(data);
-}
+async function getLegitVotes() { const d = await leesGist(); return d.legitVotes; }
+async function saveLegitVotes(v) { const d = await leesGist(); d.legitVotes = v; await schrijfGist(d); }
+async function getLegitMessageId() { const d = await leesGist(); return d.legitMessageId; }
+async function setLegitMessageId(id) { const d = await leesGist(); d.legitMessageId = id; await schrijfGist(d); }
 
 function buildLegitEmbed(votes) {
   return new EmbedBuilder()
@@ -345,17 +272,10 @@ function buildLegitEmbed(votes) {
 }
 
 function buildLegitRow(votes) {
-  const approveBtn = new ButtonBuilder()
-    .setCustomId('legit_approve')
-    .setLabel(`✅ ${votes.approve.length}`)
-    .setStyle(ButtonStyle.Secondary);
-
-  const rejectBtn = new ButtonBuilder()
-    .setCustomId('legit_reject')
-    .setLabel(`❌ ${votes.reject.length}`)
-    .setStyle(ButtonStyle.Secondary);
-
-  return new ActionRowBuilder().addComponents(approveBtn, rejectBtn);
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('legit_approve').setLabel(`✅ ${votes.approve.length}`).setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('legit_reject').setLabel(`❌ ${votes.reject.length}`).setStyle(ButtonStyle.Secondary)
+  );
 }
 
 // ===== Vote log =====
@@ -363,35 +283,25 @@ async function logVote(userId, type, doel) {
   try {
     const channel = await client.channels.fetch(VOTE_LOG_CHANNEL_ID);
     if (!channel) return;
-
     const emoji = type === 'approve' ? '✅' : '❌';
     const tekst = type === 'approve' ? 'een vinkje' : 'een kruisje';
-
     const embed = new EmbedBuilder()
       .setColor(type === 'approve' ? 0x00ff88 : 0xff4444)
       .setDescription(`<@${userId}> heeft ${emoji} ${tekst} gestemd op ${doel}`)
       .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
       .setTimestamp();
-
     await channel.send({ embeds: [embed] });
-  } catch (e) {
-    console.error('Kon vote log niet sturen:', e.message);
-  }
+  } catch (e) { console.error('Kon vote log niet sturen:', e.message); }
 }
 
 // ===== Review nummer =====
 async function scanKanaal(channel) {
-  let hoogste = 0;
-  let laatsteId = null;
-  let doorzoeken = true;
-
+  let hoogste = 0, laatsteId = null, doorzoeken = true;
   while (doorzoeken) {
     const opties = { limit: 100 };
     if (laatsteId) opties.before = laatsteId;
-
     const berichten = await channel.messages.fetch(opties);
     if (berichten.size === 0) break;
-
     for (const msg of berichten.values()) {
       for (const embed of msg.embeds) {
         if (embed.title && embed.title.startsWith('Review #')) {
@@ -400,23 +310,15 @@ async function scanKanaal(channel) {
         }
       }
     }
-
     laatsteId = berichten.last().id;
     if (berichten.size < 100) doorzoeken = false;
   }
-
   return hoogste;
 }
 
 async function volgendNummer(channel) {
-  try {
-    const c = await leesCounter();
-    return c + 1;
-  } catch (e) {
-    console.error('Gist faalde, val terug op kanaal scan:', e.message);
-    const hoogste = await scanKanaal(channel);
-    return hoogste + 1;
-  }
+  try { const c = await leesCounter(); return c + 1; }
+  catch (e) { const h = await scanKanaal(channel); return h + 1; }
 }
 
 // ===== Status =====
@@ -427,10 +329,7 @@ async function haalMemberCount() {
   try {
     const guild = await client.guilds.fetch({ guild: GUILD_ID, force: true });
     return guild.memberCount;
-  } catch (e) {
-    console.error('Kon memberCount niet ophalen:', e.message);
-    return 0;
-  }
+  } catch (e) { return 0; }
 }
 
 async function updateStatus() {
@@ -442,17 +341,11 @@ async function updateStatus() {
       client.user.setActivity(`${cachedCounter} Reviews`, { type: 3 });
     }
     statusToggle = !statusToggle;
-  } catch (e) {
-    console.error('Kon status niet updaten:', e.message);
-  }
+  } catch (e) {}
 }
 
 async function refreshCounterCache() {
-  try {
-    cachedCounter = await leesCounter();
-  } catch (e) {
-    console.error('Kon counter niet cachen:', e.message);
-  }
+  try { cachedCounter = await leesCounter(); } catch (e) {}
 }
 
 function startStatusInterval() {
@@ -468,29 +361,19 @@ async function checkRolVerval() {
     const guild = await client.guilds.fetch(GUILD_ID);
     const purchases = await getPurchases();
     const nu = Date.now();
-
     for (const p of purchases) {
       if (p.eindTijd === null) continue;
       if (p.eindTijd > nu) continue;
-
       try {
         const member = await guild.members.fetch(p.userId);
         if (member && member.roles.cache.has(REQUIRED_ROLE_ID)) {
           await member.roles.remove(REQUIRED_ROLE_ID, 'Plan verlopen');
-          console.log(`Rol verwijderd van ${member.user.tag} (plan verlopen)`);
         }
-      } catch (e) {
-        console.error(`Kon rol niet verwijderen voor ${p.userId}:`, e.message);
-      }
+      } catch (e) {}
     }
-
     const nogActief = purchases.filter(p => p.eindTijd === null || p.eindTijd > nu);
-    if (nogActief.length !== purchases.length) {
-      await savePurchases(nogActief);
-    }
-  } catch (e) {
-    console.error('Fout bij checkRolVerval:', e.message);
-  }
+    if (nogActief.length !== purchases.length) await savePurchases(nogActief);
+  } catch (e) { console.error('Fout bij checkRolVerval:', e.message); }
 }
 
 function startVervalInterval() {
@@ -499,31 +382,49 @@ function startVervalInterval() {
 }
 
 // ===== Voice =====
+function maakStilleBron() {
+  const sampleRate = 48000;
+  const numSamples = Math.floor(sampleRate * 0.02);
+  const dataSize = numSamples * 2 * 2;
+  const buffer = Buffer.alloc(44 + dataSize);
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write('WAVE', 8);
+  buffer.write('fmt ', 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(2, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * 2 * 2, 28);
+  buffer.writeUInt16LE(2 * 2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(dataSize, 40);
+  return createAudioResource(Readable.from(buffer));
+}
+
+let silenceInterval = null;
+
 async function joinVoice() {
   try {
     const channel = await client.channels.fetch(VOICE_CHANNEL_ID);
     if (!channel || !channel.isVoiceBased()) {
-      console.error('Voice kanaal niet gevonden of is geen voice kanaal');
+      console.error('Voice kanaal niet gevonden');
       return;
     }
-
     const guild = channel.guild;
     const me = guild.members.me;
 
-    // Al verbonden? Zorg dat mute/deaf aan staan
     if (me && me.voice && me.voice.channelId === VOICE_CHANNEL_ID) {
       if (!me.voice.selfMute) await me.voice.setSelfMute(true).catch(() => {});
       if (!me.voice.selfDeaf) await me.voice.setSelfDeaf(true).catch(() => {});
       return;
     }
 
-    // Oude connectie opruimen
     const bestaand = getVoiceConnection(guild.id);
-    if (bestaand) {
-      try { bestaand.destroy(); } catch (e) {}
-    }
+    if (bestaand) { try { bestaand.destroy(); } catch (e) {} }
 
-    joinVoiceChannel({
+    const connection = joinVoiceChannel({
       channelId: VOICE_CHANNEL_ID,
       guildId: guild.id,
       adapterCreator: guild.voiceAdapterCreator,
@@ -531,7 +432,49 @@ async function joinVoice() {
       selfDeaf: true,
     });
 
-    console.log(`🔇 Verbonden met voice kanaal ${channel.name} (mute + deaf)`);
+    try {
+      await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+      console.log('🔇 Voice verbinding ready');
+    } catch (e) {
+      console.error('Voice ready timeout');
+    }
+
+    const player = createAudioPlayer();
+    connection.subscribe(player);
+
+    // Reset Discord's 2-min idle timer
+    if (silenceInterval) clearInterval(silenceInterval);
+    silenceInterval = setInterval(() => {
+      try {
+        if (connection.state.status === VoiceConnectionStatus.Ready) {
+          player.play(maakStilleBron());
+        }
+      } catch (e) {}
+    }, 60_000);
+
+    // Direct een keer spelen
+    setTimeout(() => {
+      try {
+        if (connection.state.status === VoiceConnectionStatus.Ready) {
+          player.play(maakStilleBron());
+        }
+      } catch (e) {}
+    }, 3000);
+
+    connection.on(VoiceConnectionStatus.Disconnected, async () => {
+      if (silenceInterval) { clearInterval(silenceInterval); silenceInterval = null; }
+      try {
+        await Promise.race([
+          entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+          entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+        ]);
+      } catch {
+        try { connection.destroy(); } catch (e) {}
+        setTimeout(joinVoice, 3000);
+      }
+    });
+
+    console.log(`🔇 Verbonden met ${channel.name} (mute + deaf + stilte frames)`);
   } catch (e) {
     console.error('Kon niet joinen in voice:', e.message);
     setTimeout(joinVoice, 10000);
@@ -539,7 +482,6 @@ async function joinVoice() {
 }
 
 function startVoiceInterval() {
-  // Check elke 30 seconden of we nog in het kanaal zitten
   setInterval(async () => {
     try {
       const guild = await client.guilds.fetch(GUILD_ID);
@@ -547,88 +489,55 @@ function startVoiceInterval() {
       if (!me || !me.voice || me.voice.channelId !== VOICE_CHANNEL_ID) {
         await joinVoice();
       }
-    } catch (e) {
-      console.error('Voice check fout:', e.message);
-    }
-  }, 30000);
+    } catch (e) {}
+  }, 30_000);
 }
 
 // ===== Kanaal schoonmaken =====
 async function clearBotMessages(channel) {
-  let laatsteId = null;
-  let doorzoeken = true;
-
+  let laatsteId = null, doorzoeken = true;
   while (doorzoeken) {
     const opties = { limit: 100 };
     if (laatsteId) opties.before = laatsteId;
-
     const berichten = await channel.messages.fetch(opties);
     if (berichten.size === 0) break;
-
     const vanBot = berichten.filter(m => m.author.id === client.user.id);
-    for (const msg of vanBot.values()) {
-      await msg.delete().catch(() => {});
-    }
-
+    for (const msg of vanBot.values()) await msg.delete().catch(() => {});
     laatsteId = berichten.last().id;
     if (berichten.size < 100) doorzoeken = false;
   }
 }
 
 // ===== Overzicht =====
-async function getOverzichtMessageId() {
-  const data = await leesGist();
-  return data.overzichtMessageId;
-}
-
-async function setOverzichtMessageId(id) {
-  const data = await leesGist();
-  data.overzichtMessageId = id;
-  await schrijfGist(data);
-}
+async function getOverzichtMessageId() { const d = await leesGist(); return d.overzichtMessageId; }
+async function setOverzichtMessageId(id) { const d = await leesGist(); d.overzichtMessageId = id; await schrijfGist(d); }
 
 async function bouwOverzichtEmbed() {
   const purchases = await getPurchases();
-
   const perPlan = {};
-  for (const plan of Object.keys(PLANS)) {
-    perPlan[plan] = [];
-  }
-
+  for (const plan of Object.keys(PLANS)) perPlan[plan] = [];
   for (const p of purchases) {
     const planNaam = p.plan === 'lifetime' ? 'Lifetime' : p.plan;
     if (!perPlan[planNaam]) perPlan[planNaam] = [];
     perPlan[planNaam].push(p);
   }
-
   const embed = new EmbedBuilder()
     .setTitle('Actieve Purchases')
     .setColor(0x5865f2)
     .setThumbnail(LOGO)
     .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
     .setTimestamp();
-
   for (const plan of ['1 dag', '1 week', '1 maand', 'Lifetime']) {
     const lijst = perPlan[plan] || [];
-    let value = '';
-
-    if (lijst.length === 0) {
-      value = '*Geen*';
-    } else {
-      for (const p of lijst) {
-        const resterend = formatResterend(p.eindTijd);
-        const key = p.key ? p.key : 'geen key';
-        value += `<@${p.userId}> — ${resterend} — \`${key}\`\n`;
-      }
+    let value = lijst.length === 0 ? '*Geen*' : '';
+    for (const p of lijst) {
+      const resterend = formatResterend(p.eindTijd);
+      const key = p.key ? p.key : 'geen key';
+      value += `<@${p.userId}> — ${resterend} — \`${key}\`\n`;
     }
-
-    if (value.length > 1024) {
-      value = value.slice(0, 1020) + '...';
-    }
-
+    if (value.length > 1024) value = value.slice(0, 1020) + '...';
     embed.addFields({ name: `**${plan}** (${lijst.length})`, value, inline: false });
   }
-
   return embed;
 }
 
@@ -636,10 +545,8 @@ async function updateOverzicht() {
   try {
     const channel = await client.channels.fetch(PURCHASE_LOG_CHANNEL_ID);
     if (!channel) return;
-
     const embed = await bouwOverzichtEmbed();
     const messageId = await getOverzichtMessageId();
-
     if (messageId) {
       try {
         const msg = await channel.messages.fetch(messageId);
@@ -647,35 +554,23 @@ async function updateOverzicht() {
           await msg.edit({ embeds: [embed] });
           return;
         }
-      } catch (e) {
-        // Bericht bestaat niet meer
-      }
+      } catch (e) {}
     }
-
     await clearBotMessages(channel);
     const nieuw = await channel.send({ embeds: [embed] });
     await setOverzichtMessageId(nieuw.id);
-  } catch (e) {
-    console.error('Kon overzicht niet updaten:', e.message);
-  }
+  } catch (e) { console.error('Kon overzicht niet updaten:', e.message); }
 }
 
 async function herstartOverzicht() {
   try {
     const channel = await client.channels.fetch(PURCHASE_LOG_CHANNEL_ID);
-    if (!channel) {
-      console.error('Purchase log kanaal niet gevonden');
-      return;
-    }
-
+    if (!channel) return;
     await clearBotMessages(channel);
-
     const embed = await bouwOverzichtEmbed();
     const nieuw = await channel.send({ embeds: [embed] });
     await setOverzichtMessageId(nieuw.id);
-  } catch (e) {
-    console.error('Kon overzicht niet herstarten:', e.message);
-  }
+  } catch (e) { console.error('Kon overzicht niet herstarten:', e.message); }
 }
 
 function startOverzichtInterval() {
@@ -685,37 +580,27 @@ function startOverzichtInterval() {
 
 // ===== Transcript =====
 function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function renderContent(content, mentions) {
   if (!content) return '';
   let html = escapeHtml(content);
-
   if (mentions && mentions.users) {
     for (const [id, user] of mentions.users) {
-      const regex = new RegExp(`&lt;@!?${id}&gt;`, 'g');
-      html = html.replace(regex, `<span class="mention">@${escapeHtml(user.username)}</span>`);
+      html = html.replace(new RegExp(`&lt;@!?${id}&gt;`, 'g'), `<span class="mention">@${escapeHtml(user.username)}</span>`);
     }
   }
   if (mentions && mentions.roles) {
     for (const [id, role] of mentions.roles) {
-      const regex = new RegExp(`&lt;@&amp;${id}&gt;`, 'g');
-      html = html.replace(regex, `<span class="mention" style="background:#3c4270">@${escapeHtml(role.name)}</span>`);
+      html = html.replace(new RegExp(`&lt;@&amp;${id}&gt;`, 'g'), `<span class="mention" style="background:#3c4270">@${escapeHtml(role.name)}</span>`);
     }
   }
   if (mentions && mentions.channels) {
     for (const [id, ch] of mentions.channels) {
-      const regex = new RegExp(`&lt;#${id}&gt;`, 'g');
-      html = html.replace(regex, `<span class="mention">#${escapeHtml(ch.name)}</span>`);
+      html = html.replace(new RegExp(`&lt;#${id}&gt;`, 'g'), `<span class="mention">#${escapeHtml(ch.name)}</span>`);
     }
   }
-
   html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>');
   html = html.replace(/```([\s\S]*?)```/g, '<pre class="codeblock">$1</pre>');
   html = html.replace(/`([^`]+)`/g, '<code class="inline">$1</code>');
@@ -727,7 +612,6 @@ function renderContent(content, mentions) {
 
 function renderEmbed(e) {
   const kleur = e.color ? `#${e.color.toString(16).padStart(6, '0')}` : '#5865f2';
-
   let velden = '';
   if (e.fields && e.fields.length > 0) {
     velden = `<div class="embed-fields">${e.fields.map(f =>
@@ -737,7 +621,6 @@ function renderEmbed(e) {
       </div>`
     ).join('')}</div>`;
   }
-
   return `<div class="embed" style="border-left:4px solid ${kleur}">
     <div class="embed-grid">
       <div class="embed-main">
@@ -757,40 +640,27 @@ function renderAttachments(attachments) {
   if (!attachments || attachments.size === 0) return '';
   return [...attachments.values()].map(a => {
     const isImage = a.contentType && a.contentType.startsWith('image/');
-    if (isImage) {
-      return `<div class="attachment-image"><a href="${a.url}" target="_blank"><img src="${a.url}" alt="${escapeHtml(a.name)}"></a></div>`;
-    }
+    if (isImage) return `<div class="attachment-image"><a href="${a.url}" target="_blank"><img src="${a.url}" alt="${escapeHtml(a.name)}"></a></div>`;
     return `<div class="attachment"><a href="${a.url}" target="_blank">📎 ${escapeHtml(a.name)}</a></div>`;
   }).join('');
 }
 
 async function maakTranscript(channel) {
-  let alleBerichten = [];
-  let laatsteId = null;
-  let doorzoeken = true;
-
+  let alleBerichten = [], laatsteId = null, doorzoeken = true;
   while (doorzoeken) {
     const opties = { limit: 100 };
     if (laatsteId) opties.before = laatsteId;
-
     const berichten = await channel.messages.fetch(opties);
     if (berichten.size === 0) break;
-
     alleBerichten.push(...berichten.values());
     laatsteId = berichten.last().id;
     if (berichten.size < 100) doorzoeken = false;
   }
-
   alleBerichten.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
   const berichtenHtml = alleBerichten.map(m => {
     const avatar = m.author.displayAvatarURL({ extension: 'png', size: 64 });
-    const tijd = new Date(m.createdTimestamp).toLocaleString('nl-NL', {
-      day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit'
-    });
+    const tijd = new Date(m.createdTimestamp).toLocaleString('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const botBadge = m.author.bot ? '<span class="bot-badge">BOT</span>' : '';
-
     return `<div class="message">
       <img class="avatar" src="${avatar}" alt="avatar">
       <div class="message-body">
@@ -805,65 +675,50 @@ async function maakTranscript(channel) {
       </div>
     </div>`;
   }).join('');
-
   const html = `<!DOCTYPE html>
-<html lang="nl">
-<head>
-<meta charset="UTF-8">
-<title>Transcript - #${escapeHtml(channel.name)}</title>
-<link rel="icon" href="${LOGO}">
+<html lang="nl"><head><meta charset="UTF-8"><title>Transcript - #${escapeHtml(channel.name)}</title><link rel="icon" href="${LOGO}">
 <style>
-  * { box-sizing: border-box; }
-  body { margin: 0; background: #313338; color: #dbdee1; font-family: 'gg sans', 'Whitney', 'Helvetica Neue', Arial, sans-serif; font-size: 16px; line-height: 1.375; }
-  .header { background: #2b2d31; padding: 16px 20px; border-bottom: 1px solid #1e1f22; position: sticky; top: 0; z-index: 10; }
-  .header h1 { margin: 0; font-size: 18px; color: #f2f3f5; }
-  .header .meta { color: #949ba4; font-size: 13px; margin-top: 4px; }
-  .chat { padding: 20px 0; }
-  .message { display: flex; padding: 4px 20px; margin-top: 16px; }
-  .message:hover { background: #2e3035; }
-  .avatar { width: 40px; height: 40px; border-radius: 50%; margin-right: 16px; flex-shrink: 0; }
-  .message-body { flex: 1; min-width: 0; }
-  .message-header { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
-  .username { font-weight: 500; font-size: 16px; }
-  .bot-badge { background: #5865f2; color: #fff; font-size: 10px; font-weight: 600; padding: 1px 4px; border-radius: 3px; letter-spacing: 0.5px; }
-  .timestamp { color: #949ba4; font-size: 12px; }
-  .message-content { color: #dbdee1; word-wrap: break-word; white-space: pre-wrap; }
-  .message-content a { color: #00a8fc; text-decoration: none; }
-  .message-content a:hover { text-decoration: underline; }
-  .mention { background: #3c4270; color: #c9cdfb; padding: 0 2px; border-radius: 3px; font-weight: 500; }
-  .inline { background: #2b2d31; padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 14px; }
-  .codeblock { background: #2b2d31; padding: 8px 12px; border-radius: 4px; font-family: monospace; font-size: 14px; overflow-x: auto; margin: 4px 0; white-space: pre-wrap; }
-  .embed { background: #2b2d31; border-radius: 4px; padding: 12px 16px; margin-top: 8px; max-width: 520px; }
-  .embed-grid { display: flex; gap: 12px; }
-  .embed-main { flex: 1; min-width: 0; }
-  .embed-author { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: #f2f3f5; margin-bottom: 4px; }
-  .embed-author-icon { width: 24px; height: 24px; border-radius: 50%; }
-  .embed-title { font-size: 16px; font-weight: 600; color: #f2f3f5; margin-bottom: 4px; }
-  .embed-desc { font-size: 14px; color: #dbdee1; margin-bottom: 8px; }
-  .embed-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
-  .embed-field-name { font-size: 14px; font-weight: 600; color: #f2f3f5; margin-bottom: 2px; }
-  .embed-field-value { font-size: 14px; color: #dbdee1; }
-  .embed-thumb { width: 80px; height: 80px; border-radius: 4px; flex-shrink: 0; object-fit: cover; }
-  .embed-image { max-width: 100%; border-radius: 4px; margin-top: 8px; }
-  .embed-footer { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #949ba4; margin-top: 8px; }
-  .embed-footer-icon { width: 20px; height: 20px; border-radius: 50%; }
-  .attachment { margin-top: 6px; font-size: 14px; }
-  .attachment a { color: #00a8fc; text-decoration: none; }
-  .attachment-image { margin-top: 8px; }
-  .attachment-image img { max-width: 400px; max-height: 300px; border-radius: 4px; }
-</style>
-</head>
-<body>
-  <div class="header">
-    <h1>Transcript: #${escapeHtml(channel.name)}</h1>
-    <div class="meta">${alleBerichten.length} berichten • Gegenereerd op ${new Date().toLocaleString('nl-NL')}</div>
-  </div>
-  <div class="chat">
-    ${berichtenHtml}
-  </div>
-</body>
-</html>`;
-
+* { box-sizing: border-box; }
+body { margin: 0; background: #313338; color: #dbdee1; font-family: 'gg sans', 'Whitney', 'Helvetica Neue', Arial, sans-serif; font-size: 16px; line-height: 1.375; }
+.header { background: #2b2d31; padding: 16px 20px; border-bottom: 1px solid #1e1f22; position: sticky; top: 0; z-index: 10; }
+.header h1 { margin: 0; font-size: 18px; color: #f2f3f5; }
+.header .meta { color: #949ba4; font-size: 13px; margin-top: 4px; }
+.chat { padding: 20px 0; }
+.message { display: flex; padding: 4px 20px; margin-top: 16px; }
+.message:hover { background: #2e3035; }
+.avatar { width: 40px; height: 40px; border-radius: 50%; margin-right: 16px; flex-shrink: 0; }
+.message-body { flex: 1; min-width: 0; }
+.message-header { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.username { font-weight: 500; font-size: 16px; }
+.bot-badge { background: #5865f2; color: #fff; font-size: 10px; font-weight: 600; padding: 1px 4px; border-radius: 3px; letter-spacing: 0.5px; }
+.timestamp { color: #949ba4; font-size: 12px; }
+.message-content { color: #dbdee1; word-wrap: break-word; white-space: pre-wrap; }
+.message-content a { color: #00a8fc; text-decoration: none; }
+.mention { background: #3c4270; color: #c9cdfb; padding: 0 2px; border-radius: 3px; font-weight: 500; }
+.inline { background: #2b2d31; padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 14px; }
+.codeblock { background: #2b2d31; padding: 8px 12px; border-radius: 4px; font-family: monospace; font-size: 14px; overflow-x: auto; margin: 4px 0; white-space: pre-wrap; }
+.embed { background: #2b2d31; border-radius: 4px; padding: 12px 16px; margin-top: 8px; max-width: 520px; }
+.embed-grid { display: flex; gap: 12px; }
+.embed-main { flex: 1; min-width: 0; }
+.embed-author { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: #f2f3f5; margin-bottom: 4px; }
+.embed-author-icon { width: 24px; height: 24px; border-radius: 50%; }
+.embed-title { font-size: 16px; font-weight: 600; color: #f2f3f5; margin-bottom: 4px; }
+.embed-desc { font-size: 14px; color: #dbdee1; margin-bottom: 8px; }
+.embed-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.embed-field-name { font-size: 14px; font-weight: 600; color: #f2f3f5; margin-bottom: 2px; }
+.embed-field-value { font-size: 14px; color: #dbdee1; }
+.embed-thumb { width: 80px; height: 80px; border-radius: 4px; flex-shrink: 0; object-fit: cover; }
+.embed-image { max-width: 100%; border-radius: 4px; margin-top: 8px; }
+.embed-footer { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #949ba4; margin-top: 8px; }
+.embed-footer-icon { width: 20px; height: 20px; border-radius: 50%; }
+.attachment { margin-top: 6px; font-size: 14px; }
+.attachment a { color: #00a8fc; text-decoration: none; }
+.attachment-image { margin-top: 8px; }
+.attachment-image img { max-width: 400px; max-height: 300px; border-radius: 4px; }
+</style></head><body>
+<div class="header"><h1>Transcript: #${escapeHtml(channel.name)}</h1><div class="meta">${alleBerichten.length} berichten • Gegenereerd op ${new Date().toLocaleString('nl-NL')}</div></div>
+<div class="chat">${berichtenHtml}</div>
+</body></html>`;
   return { html, aantalBerichten: alleBerichten.length };
 }
 
@@ -872,29 +727,18 @@ async function setupVerify() {
   try {
     const channel = await client.channels.fetch(VERIFY_CHANNEL_ID);
     if (!channel) return;
-
     await clearBotMessages(channel);
-
     const embed = new EmbedBuilder()
       .setTitle('Verify')
       .setColor(0x5865f2)
       .setDescription('Klik hieronder om toegang te krijgen tot de server.')
       .setThumbnail(LOGO)
       .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
-
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId('verify_button')
-        .setLabel('Verify')
-        .setEmoji('✅')
-        .setStyle(ButtonStyle.Success)
+      new ButtonBuilder().setCustomId('verify_button').setLabel('Verify').setEmoji('✅').setStyle(ButtonStyle.Success)
     );
-
     await channel.send({ embeds: [embed], components: [row] });
-    console.log('Verify bericht geplaatst');
-  } catch (e) {
-    console.error('Kon verify niet opzetten:', e.message);
-  }
+  } catch (e) { console.error('Kon verify niet opzetten:', e.message); }
 }
 
 // ===== Prijslijst =====
@@ -902,58 +746,20 @@ async function setupPricing() {
   try {
     const channel = await client.channels.fetch(PRICING_CHANNEL_ID);
     if (!channel) return;
-
     await clearBotMessages(channel);
-
     const embed = new EmbedBuilder()
       .setTitle('Vexora.cc Private')
       .setColor(0x5865f2)
       .setThumbnail(LOGO)
-      .setDescription(
-        '> Premium external cheat met advanced bypass.\n' +
-        '> ⚡ Snelle levering • 🔒 Veilig • 🕐 24/7 Support'
-      )
+      .setDescription('> Premium external cheat met advanced bypass.\n> ⚡ Snelle levering • 🔒 Veilig • 🕐 24/7 Support')
       .addFields(
-        {
-          name: '💰 Pricing',
-          value:
-            '```\n' +
-            '1 Day     →  €2.50\n' +
-            '1 Week    →  €7.50\n' +
-            '1 Month   →  €20.00\n' +
-            'Lifetime  →  €60.00\n' +
-            '```',
-          inline: false,
-        },
-        {
-          name: '🛡️ Product',
-          value:
-            '> • External Cheat\n' +
-            '> • Advanced bypass — removes all traces after execution, passes all scans & manual checks\n' +
-            '> • Daily Updates\n' +
-            '> • Easy to use interface\n' +
-            '> • 24/7 Support',
-          inline: false,
-        },
-        {
-          name: '👥 Group Deals',
-          value:
-            '```\n' +
-            'Duo    →  €30 per person\n' +
-            'Trio   →  €20 per person\n' +
-            'Squad  →  €15 per person\n' +
-            'More?  →  Open a ticket\n' +
-            '```',
-          inline: false,
-        }
+        { name: '💰 Pricing', value: '```\n1 Day     →  €2.50\n1 Week    →  €7.50\n1 Month   →  €20.00\nLifetime  →  €60.00\n```', inline: false },
+        { name: '🛡️ Product', value: '> • External Cheat\n> • Advanced bypass\n> • Daily Updates\n> • Easy to use interface\n> • 24/7 Support', inline: false },
+        { name: '👥 Group Deals', value: '```\nDuo    →  €30 per person\nTrio   →  €20 per person\nSquad  →  €15 per person\nMore?  →  Open a ticket\n```', inline: false }
       )
       .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
-
     await channel.send({ embeds: [embed] });
-    console.log('Prijslijst geplaatst');
-  } catch (e) {
-    console.error('Kon prijslijst niet plaatsen:', e.message);
-  }
+  } catch (e) { console.error('Kon prijslijst niet plaatsen:', e.message); }
 }
 
 // ===== Ticket panel =====
@@ -961,21 +767,13 @@ async function setupTicketPanel() {
   try {
     const channel = await client.channels.fetch(TICKET_PANEL_CHANNEL_ID);
     if (!channel) return;
-
     await clearBotMessages(channel);
-
     const embed = new EmbedBuilder()
       .setTitle('Tickets')
       .setColor(0x5865f2)
-      .setDescription(
-        'Kies hieronder een categorie om een ticket te openen.\n\n' +
-        '> ⚡ Snelle levering\n' +
-        '> 🔒 Veilig & betrouwbaar\n' +
-        '> 🕐 24/7 Support'
-      )
+      .setDescription('Kies hieronder een categorie om een ticket te openen.\n\n> ⚡ Snelle levering\n> 🔒 Veilig & betrouwbaar\n> 🕐 24/7 Support')
       .setThumbnail(LOGO)
       .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
-
     const menu = new StringSelectMenuBuilder()
       .setCustomId('ticket_category_select')
       .setPlaceholder('Categorie...')
@@ -984,81 +782,51 @@ async function setupTicketPanel() {
         { label: 'Purchase', value: 'purchase', emoji: '🛒' },
         { label: 'Bug', value: 'bug', emoji: '⚠️' },
       ]);
-
     const row = new ActionRowBuilder().addComponents(menu);
-
     await channel.send({ embeds: [embed], components: [row] });
-    console.log('Ticket panel geplaatst');
-  } catch (e) {
-    console.error('Kon ticket panel niet plaatsen:', e.message);
-  }
+  } catch (e) { console.error('Kon ticket panel niet plaatsen:', e.message); }
 }
 
 // ===== Legit poll =====
 async function setupLegitPoll() {
   try {
     const channel = await client.channels.fetch(LEGIT_CHANNEL_ID);
-    if (!channel) {
-      console.error('Legit kanaal niet gevonden');
-      return;
-    }
-
+    if (!channel) return;
     const votes = await getLegitVotes();
     const embed = buildLegitEmbed(votes);
     const row = buildLegitRow(votes);
-
     const messageId = await getLegitMessageId();
-
     if (messageId) {
       try {
         const msg = await channel.messages.fetch(messageId);
         if (msg && msg.author.id === client.user.id) {
           await msg.edit({ embeds: [embed], components: [row] });
-          console.log('Legit poll bijgewerkt');
           return;
         }
-      } catch (e) {
-        // Bericht bestaat niet meer
-      }
+      } catch (e) {}
     }
-
     await clearBotMessages(channel);
     const nieuw = await channel.send({ embeds: [embed], components: [row] });
     await setLegitMessageId(nieuw.id);
-    console.log('Legit poll geplaatst');
-  } catch (e) {
-    console.error('Kon legit poll niet plaatsen:', e.message);
-  }
+  } catch (e) { console.error('Kon legit poll niet plaatsen:', e.message); }
 }
 
 // ===== Ticket storage =====
-async function getTickets() {
-  const data = await leesGist();
-  return data.tickets;
-}
-
-async function saveTickets(tickets) {
-  const data = await leesGist();
-  data.tickets = tickets;
-  await schrijfGist(data);
-}
-
+async function getTickets() { const d = await leesGist(); return d.tickets; }
+async function saveTickets(t) { const d = await leesGist(); d.tickets = t; await schrijfGist(d); }
 async function addTicket(channelId, userId, categorieKey) {
-  const tickets = await getTickets();
-  tickets[channelId] = { userId, categorie: categorieKey, gestart: Date.now() };
-  await saveTickets(tickets);
+  const t = await getTickets();
+  t[channelId] = { userId, categorie: categorieKey, gestart: Date.now() };
+  await saveTickets(t);
 }
-
 async function removeTicket(channelId) {
-  const tickets = await getTickets();
-  delete tickets[channelId];
-  await saveTickets(tickets);
+  const t = await getTickets();
+  delete t[channelId];
+  await saveTickets(t);
 }
 
 // ===== Helpers =====
-function sterren(n) {
-  return '⭐'.repeat(n) + '☆'.repeat(5 - n);
-}
+function sterren(n) { return '⭐'.repeat(n) + '☆'.repeat(5 - n); }
 
 function sterRow(gekozen) {
   const row = new ActionRowBuilder();
@@ -1076,604 +844,279 @@ function sterRow(gekozen) {
 
 function submitRow() {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('submit')
-      .setLabel('Verstuur')
-      .setStyle(ButtonStyle.Primary)
+    new ButtonBuilder().setCustomId('submit').setLabel('Verstuur').setStyle(ButtonStyle.Primary)
   );
 }
 
 // ===== Interaction handler =====
 client.on('interactionCreate', async (i) => {
-  // ===== /review =====
+  // /review
   if (i.isChatInputCommand() && i.commandName === 'review') {
-    if (i.channelId !== REVIEW_CHANNEL_ID) {
-      return i.reply({
-        content: `Je kunt alleen in <#${REVIEW_CHANNEL_ID}> een review plaatsen.`,
-        ephemeral: true,
-      });
-    }
-
-    if (!i.member.roles.cache.has(REQUIRED_ROLE_ID)) {
-      return i.reply({
-        content: `Je hebt de <@&${REQUIRED_ROLE_ID}> rol nodig om een review te plaatsen.`,
-        ephemeral: true,
-      });
-    }
-
+    if (i.channelId !== REVIEW_CHANNEL_ID) return i.reply({ content: `Je kunt alleen in <#${REVIEW_CHANNEL_ID}> een review plaatsen.`, ephemeral: true });
+    if (!i.member.roles.cache.has(REQUIRED_ROLE_ID)) return i.reply({ content: `Je hebt de <@&${REQUIRED_ROLE_ID}> rol nodig om een review te plaatsen.`, ephemeral: true });
     const extra = i.options.getString('extra');
     reviews.set(i.user.id, { product: PRODUCT, extra, rating: null });
-
-    const embed = new EmbedBuilder()
-      .setTitle('Review aanmaken')
-      .setDescription(`**Product:** ${PRODUCT}\n\nKies een aantal sterren.`)
-      .setColor(0x5865f2)
-      .setThumbnail(LOGO);
-
-    return i.reply({
-      embeds: [embed],
-      components: [sterRow(null), submitRow()],
-      ephemeral: true,
-    });
+    const embed = new EmbedBuilder().setTitle('Review aanmaken').setDescription(`**Product:** ${PRODUCT}\n\nKies een aantal sterren.`).setColor(0x5865f2).setThumbnail(LOGO);
+    return i.reply({ embeds: [embed], components: [sterRow(null), submitRow()], ephemeral: true });
   }
 
-  // ===== /purchase =====
+  // /purchase
   if (i.isChatInputCommand() && i.commandName === 'purchase') {
-    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) {
-      return i.reply({
-        content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig om dit te doen.`,
-        ephemeral: true,
-      });
-    }
-
+    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) return i.reply({ content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig.`, ephemeral: true });
     await i.deferReply();
-
     const doelUser = i.options.getUser('user');
     const plan = i.options.getString('plan');
     const key = i.options.getString('key');
     const duur = planDuurMs(plan);
-
     if (duur === undefined) return i.editReply({ content: 'Onbekend plan.' });
-
     try {
       const guild = await client.guilds.fetch(GUILD_ID);
       const member = await guild.members.fetch(doelUser.id);
-
       await member.roles.add(REQUIRED_ROLE_ID, `Purchase: ${plan}`);
-
       const { eindTijd } = await addPurchase(doelUser.id, plan, key);
-
       await updateOverzicht();
-
-      const duurTekst = formatDuur(duur);
       const planTekst = plan === 'lifetime' ? 'Lifetime' : plan;
-
       const embed = new EmbedBuilder()
-        .setTitle('Purchase Voltooid')
-        .setColor(0x00ff88)
-        .setThumbnail(LOGO)
-        .setDescription(
-          `Bedankt voor je aankoop, <@${doelUser.id}>!\n\n` +
-          `Je plan is actief en je key staat hieronder.`
-        )
+        .setTitle('Purchase Voltooid').setColor(0x00ff88).setThumbnail(LOGO)
+        .setDescription(`Bedankt voor je aankoop, <@${doelUser.id}>!\n\nJe plan is actief en je key staat hieronder.`)
         .addFields(
           { name: 'Klant', value: `<@${doelUser.id}>`, inline: true },
           { name: 'Plan', value: planTekst, inline: true },
-          { name: 'Duur', value: duurTekst, inline: true },
+          { name: 'Duur', value: formatDuur(duur), inline: true },
           { name: 'Key', value: `\`\`\`${key}\`\`\``, inline: false },
-          {
-            name: 'Verloopt',
-            value: eindTijd === null
-              ? 'Nooit (Lifetime)'
-              : `<t:${Math.floor(eindTijd / 1000)}:F> (<t:${Math.floor(eindTijd / 1000)}:R>)`,
-            inline: false,
-          }
+          { name: 'Verloopt', value: eindTijd === null ? 'Nooit (Lifetime)' : `<t:${Math.floor(eindTijd/1000)}:F> (<t:${Math.floor(eindTijd/1000)}:R>)`, inline: false }
         )
-        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
-        .setTimestamp();
-
+        .setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
       await i.editReply({ embeds: [embed] });
-
       try {
         const dmEmbed = new EmbedBuilder()
-          .setTitle('Bedankt voor je aankoop!')
-          .setColor(0x00ff88)
-          .setThumbnail(LOGO)
-          .setDescription(
-            `Hey <@${doelUser.id}>,\n\n` +
-            `Bedankt voor je aankoop van **${planTekst} Plan** voor **${PRODUCT}**!\n\n` +
-            `Hier is je key:\n\`\`\`${key}\`\`\`\n` +
-            `Bewaar deze goed — je hebt hem nodig om het product te gebruiken.\n\n` +
-            `Wil je een review achterlaten? Gebruik \`/review\` in de server. Dat stellen we enorm op prijs! 💙`
-          )
-          .addFields(
-            { name: 'Plan', value: planTekst, inline: true },
-            {
-              name: 'Verloopt',
-              value: eindTijd === null
-                ? 'Nooit (Lifetime)'
-                : `<t:${Math.floor(eindTijd / 1000)}:R>`,
-              inline: true,
-            }
-          )
-          .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
-          .setTimestamp();
-
+          .setTitle('Bedankt voor je aankoop!').setColor(0x00ff88).setThumbnail(LOGO)
+          .setDescription(`Hey <@${doelUser.id}>,\n\nBedankt voor je aankoop van **${planTekst} Plan** voor **${PRODUCT}**!\n\nHier is je key:\n\`\`\`${key}\`\`\`\nBewaar deze goed!\n\nWil je een review achterlaten? Gebruik \`/review\`. 💙`)
+          .setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
         await doelUser.send({ embeds: [dmEmbed] });
-      } catch (e) {
-        console.error('Kon DM niet sturen naar', doelUser.tag, ':', e.message);
-      }
-    } catch (e) {
-      console.error('Purchase fout:', e);
-      await i.editReply({ content: `Fout: ${e.message}` });
-    }
+      } catch (e) {}
+    } catch (e) { await i.editReply({ content: `Fout: ${e.message}` }); }
     return;
   }
 
-  // ===== /removelicense =====
+  // /removelicense
   if (i.isChatInputCommand() && i.commandName === 'removelicense') {
-    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) {
-      return i.reply({
-        content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig om dit te doen.`,
-        ephemeral: true,
-      });
-    }
-
+    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) return i.reply({ content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig.`, ephemeral: true });
     await i.deferReply();
-
     const doelUser = i.options.getUser('user');
-
     try {
       const guild = await client.guilds.fetch(GUILD_ID);
       const member = await guild.members.fetch(doelUser.id);
-
       const bestaande = await removePurchase(doelUser.id);
-
-      if (!bestaande) {
-        return i.editReply({
-          content: `⚠️ <@${doelUser.id}> heeft geen actieve licentie in de database.`,
-        });
-      }
-
+      if (!bestaande) return i.editReply({ content: `⚠️ <@${doelUser.id}> heeft geen actieve licentie.` });
       let rolVerwijderd = false;
       if (member.roles.cache.has(REQUIRED_ROLE_ID)) {
         await member.roles.remove(REQUIRED_ROLE_ID, 'Licentie verwijderd');
         rolVerwijderd = true;
       }
-
       await updateOverzicht();
-
-      const embed = new EmbedBuilder()
-        .setTitle('Licentie Verwijderd')
-        .setColor(0xff4444)
-        .setThumbnail(LOGO)
+      const embed = new EmbedBuilder().setTitle('Licentie Verwijderd').setColor(0xff4444).setThumbnail(LOGO)
         .addFields(
           { name: 'Klant', value: `<@${doelUser.id}>`, inline: true },
           { name: 'Plan', value: bestaande.plan === 'lifetime' ? 'Lifetime' : bestaande.plan, inline: true },
           { name: 'Key', value: bestaande.key ? `\`${bestaande.key}\`` : 'geen', inline: false },
-          { name: 'Rol verwijderd', value: rolVerwijderd ? 'Ja' : 'Nee (had de rol niet)', inline: true }
-        )
-        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
-        .setTimestamp();
-
+          { name: 'Rol verwijderd', value: rolVerwijderd ? 'Ja' : 'Nee', inline: true }
+        ).setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
       await i.editReply({ embeds: [embed] });
-    } catch (e) {
-      console.error('RemoveLicense fout:', e);
-      await i.editReply({ content: `Fout: ${e.message}` });
-    }
+    } catch (e) { await i.editReply({ content: `Fout: ${e.message}` }); }
     return;
   }
 
-  // ===== /suggestie =====
+  // /suggestie
   if (i.isChatInputCommand() && i.commandName === 'suggestie') {
     await i.deferReply({ ephemeral: true });
-
     const tekst = i.options.getString('tekst');
-
     try {
       const kanaal = await client.channels.fetch(SUGGESTIE_CHANNEL_ID);
-
-      const placeholder = new EmbedBuilder()
-        .setTitle('Nieuwe Suggestie')
-        .setColor(0x5865f2)
-        .setThumbnail(LOGO)
-        .setDescription('Laden...')
-        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
-        .setTimestamp();
-
+      const placeholder = new EmbedBuilder().setTitle('Nieuwe Suggestie').setColor(0x5865f2).setThumbnail(LOGO).setDescription('Laden...').setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
       const bericht = await kanaal.send({ embeds: [placeholder] });
-
       const suggestions = await getSuggestions();
-      suggestions[bericht.id] = {
-        tekst,
-        auteurId: i.user.id,
-        approve: [],
-        reject: [],
-        gestart: Date.now(),
-      };
+      suggestions[bericht.id] = { tekst, auteurId: i.user.id, approve: [], reject: [], gestart: Date.now() };
       await saveSuggestions(suggestions);
-
       const s = suggestions[bericht.id];
-      await bericht.edit({
-        embeds: [buildSuggestieEmbed(s)],
-        components: [buildSuggestieRow(bericht.id, s)],
-      });
-
+      await bericht.edit({ embeds: [buildSuggestieEmbed(s)], components: [buildSuggestieRow(bericht.id, s)] });
       await i.editReply({ content: `Je suggestie is geplaatst in <#${SUGGESTIE_CHANNEL_ID}>.` });
-    } catch (e) {
-      console.error('Suggestie fout:', e);
-      await i.editReply({ content: `Fout: ${e.message}` });
-    }
+    } catch (e) { await i.editReply({ content: `Fout: ${e.message}` }); }
     return;
   }
 
-  // ===== /refresh =====
+  // /refresh
   if (i.isChatInputCommand() && i.commandName === 'refresh') {
-    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) {
-      return i.reply({
-        content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig om dit te doen.`,
-        ephemeral: true,
-      });
-    }
-
+    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) return i.reply({ content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig.`, ephemeral: true });
     await i.deferReply({ ephemeral: true });
-
     try {
       await herstartOverzicht();
       await i.editReply({ content: `Overzicht vernieuwd in <#${PURCHASE_LOG_CHANNEL_ID}>.` });
-    } catch (e) {
-      console.error('Refresh fout:', e);
-      await i.editReply({ content: `Fout: ${e.message}` });
-    }
+    } catch (e) { await i.editReply({ content: `Fout: ${e.message}` }); }
     return;
   }
 
-  // ===== /removekruis =====
+  // /removekruis
   if (i.isChatInputCommand() && i.commandName === 'removekruis') {
-    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) {
-      return i.reply({
-        content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig om dit te doen.`,
-        ephemeral: true,
-      });
-    }
-
+    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) return i.reply({ content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig.`, ephemeral: true });
     await i.deferReply();
-
     const aantal = i.options.getInteger('aantal');
-
     try {
       const votes = await getLegitVotes();
       const huidig = votes.reject.length;
-
-      if (huidig === 0) {
-        return i.editReply({
-          content: '⚠️ Er zijn momenteel geen kruisjes om te verwijderen.',
-        });
-      }
-
+      if (huidig === 0) return i.editReply({ content: '⚠️ Er zijn momenteel geen kruisjes om te verwijderen.' });
       const teVerwijderen = Math.min(aantal, huidig);
-
-      // Verwijder de laatste N kruisjes (recentste stemmen)
       votes.reject.splice(huidig - teVerwijderen, teVerwijderen);
-
       await saveLegitVotes(votes);
-
-      // Update het poll bericht
       try {
         const channel = await client.channels.fetch(LEGIT_CHANNEL_ID);
         const messageId = await getLegitMessageId();
         if (messageId) {
           const msg = await channel.messages.fetch(messageId);
           if (msg && msg.author.id === client.user.id) {
-            await msg.edit({
-              embeds: [buildLegitEmbed(votes)],
-              components: [buildLegitRow(votes)],
-            });
+            await msg.edit({ embeds: [buildLegitEmbed(votes)], components: [buildLegitRow(votes)] });
           }
         }
-      } catch (e) {
-        console.error('Kon legit poll niet updaten:', e.message);
-      }
-
-      // Log de actie
+      } catch (e) {}
       try {
         const logChannel = await client.channels.fetch(VOTE_LOG_CHANNEL_ID);
         if (logChannel) {
-          const embed = new EmbedBuilder()
-            .setColor(0xff4444)
-            .setDescription(
-              `🧹 <@${i.user.id}> heeft **${teVerwijderen}** kruisje(s) ❌ verwijderd uit de legit poll.`
-            )
-            .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
-            .setTimestamp();
+          const embed = new EmbedBuilder().setColor(0xff4444)
+            .setDescription(`🧹 <@${i.user.id}> heeft **${teVerwijderen}** kruisje(s) ❌ verwijderd uit de legit poll.`)
+            .setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
           await logChannel.send({ embeds: [embed] });
         }
-      } catch (e) {
-        console.error('Kon log niet sturen:', e.message);
-      }
-
-      const embed = new EmbedBuilder()
-        .setTitle('Kruisjes Verwijderd')
-        .setColor(0xff4444)
-        .setThumbnail(LOGO)
+      } catch (e) {}
+      const embed = new EmbedBuilder().setTitle('Kruisjes Verwijderd').setColor(0xff4444).setThumbnail(LOGO)
         .addFields(
-          { name: 'Verwijderd', value: `${teVerwijderd}`, inline: true },
+          { name: 'Verwijderd', value: `${teVerwijderen}`, inline: true },
           { name: 'Resterend ❌', value: `${votes.reject.length}`, inline: true },
           { name: 'Totaal ✅', value: `${votes.approve.length}`, inline: true }
-        )
-        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
-        .setTimestamp();
-
-      if (teVerwijderen < aantal) {
-        embed.setDescription(
-          `⚠️ Je vroeg om **${aantal}** te verwijderen, maar er waren er maar **${huidig}**. Alle kruisjes zijn verwijderd.`
-        );
-      }
-
+        ).setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
+      if (teVerwijderen < aantal) embed.setDescription(`⚠️ Je vroeg om **${aantal}**, maar er waren er maar **${huidig}**.`);
       await i.editReply({ embeds: [embed] });
-    } catch (e) {
-      console.error('RemoveKruis fout:', e);
-      await i.editReply({ content: `Fout: ${e.message}` });
-    }
+    } catch (e) { await i.editReply({ content: `Fout: ${e.message}` }); }
     return;
   }
 
-  // ===== Ticket categorie select =====
+  // Ticket categorie select
   if (i.isStringSelectMenu() && i.customId === 'ticket_category_select') {
     await i.deferReply({ ephemeral: true });
-
     const keuze = i.values[0];
     const cat = TICKET_CATEGORIES[keuze];
-
     if (!cat) return i.editReply({ content: 'Onbekende categorie.' });
-
     try {
       const guild = await client.guilds.fetch(GUILD_ID);
-
       const tickets = await getTickets();
       const bestaand = Object.entries(tickets).find(([_, t]) => t.userId === i.user.id);
-      if (bestaand) {
-        return i.editReply({
-          content: `Je hebt al een open ticket: <#${bestaand[0]}>`,
-        });
-      }
-
+      if (bestaand) return i.editReply({ content: `Je hebt al een open ticket: <#${bestaand[0]}>` });
       const kanaalNaam = `${cat.prefix}-${i.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '');
-
-      const permissionOverwrites = [
-        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-        {
-          id: i.user.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.AttachFiles,
-          ],
-        },
-        {
-          id: TICKET_SUPPORT_ROLE_ID,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.ManageMessages,
-          ],
-        },
-        {
-          id: client.user.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ManageChannels,
-            PermissionFlagsBits.ReadMessageHistory,
-          ],
-        },
-      ];
-
       const ticketChannel = await guild.channels.create({
         name: kanaalNaam,
         type: ChannelType.GuildText,
         parent: cat.categoryId,
-        permissionOverwrites,
+        permissionOverwrites: [
+          { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+          { id: i.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles] },
+          { id: TICKET_SUPPORT_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages] },
+          { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ReadMessageHistory] },
+        ],
         topic: `Ticket van ${i.user.tag} — ${cat.naam}`,
       });
-
       await addTicket(ticketChannel.id, i.user.id, keuze);
-
-      const embed = new EmbedBuilder()
-        .setTitle(cat.naam)
-        .setColor(cat.kleur)
+      const embed = new EmbedBuilder().setTitle(cat.naam).setColor(cat.kleur)
         .setDescription(`<@${i.user.id}> — beschrijf hieronder je vraag.`)
-        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
-        .setTimestamp();
-
+        .setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
       const closeRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('ticket_close')
-          .setLabel('Sluiten')
-          .setEmoji('🔒')
-          .setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId('ticket_close').setLabel('Sluiten').setEmoji('🔒').setStyle(ButtonStyle.Danger)
       );
-
-      await ticketChannel.send({
-        content: `<@${i.user.id}> <@&${TICKET_SUPPORT_ROLE_ID}>`,
-        embeds: [embed],
-        components: [closeRow],
-      });
-
+      await ticketChannel.send({ content: `<@${i.user.id}> <@&${TICKET_SUPPORT_ROLE_ID}>`, embeds: [embed], components: [closeRow] });
       await i.editReply({ content: `Ticket aangemaakt: <#${ticketChannel.id}>` });
-    } catch (e) {
-      console.error('Ticket aanmaken fout:', e);
-      await i.editReply({ content: `Fout: ${e.message}` });
-    }
+    } catch (e) { await i.editReply({ content: `Fout: ${e.message}` }); }
     return;
   }
 
-  // ===== Buttons =====
+  // Buttons
   if (i.isButton()) {
-    // Verify
     if (i.customId === 'verify_button') {
       try {
-        if (i.member.roles.cache.has(VERIFY_ROLE_ID)) {
-          return i.reply({ content: 'Je bent al geverifieerd.', ephemeral: true });
-        }
+        if (i.member.roles.cache.has(VERIFY_ROLE_ID)) return i.reply({ content: 'Je bent al geverifieerd.', ephemeral: true });
         await i.member.roles.add(VERIFY_ROLE_ID, 'Verified via knop');
         await i.reply({ content: '✅ Je bent geverifieerd! Welkom bij Vexora.cc.', ephemeral: true });
-      } catch (e) {
-        console.error('Verify fout:', e);
-        await i.reply({ content: `Fout: ${e.message}`, ephemeral: true });
-      }
+      } catch (e) { await i.reply({ content: `Fout: ${e.message}`, ephemeral: true }); }
       return;
     }
 
-    // Legit poll
     if (i.customId === 'legit_approve' || i.customId === 'legit_reject') {
       try {
         const votes = await getLegitVotes();
         const userId = i.user.id;
-
         votes.approve = votes.approve.filter(id => id !== userId);
         votes.reject = votes.reject.filter(id => id !== userId);
-
         const type = i.customId === 'legit_approve' ? 'approve' : 'reject';
-
-        if (type === 'approve') {
-          votes.approve.push(userId);
-        } else {
-          votes.reject.push(userId);
-        }
-
+        if (type === 'approve') votes.approve.push(userId);
+        else votes.reject.push(userId);
         await saveLegitVotes(votes);
-
-        await i.update({
-          embeds: [buildLegitEmbed(votes)],
-          components: [buildLegitRow(votes)],
-        });
-
+        await i.update({ embeds: [buildLegitEmbed(votes)], components: [buildLegitRow(votes)] });
         await logVote(userId, type, '**Are we legit?**');
-      } catch (e) {
-        console.error('Legit stem fout:', e);
-        await i.reply({ content: `Fout: ${e.message}`, ephemeral: true });
-      }
+      } catch (e) { await i.reply({ content: `Fout: ${e.message}`, ephemeral: true }); }
       return;
     }
 
-    // Ticket sluiten
     if (i.customId === 'ticket_close') {
       try {
         const tickets = await getTickets();
         const ticket = tickets[i.channelId];
-
-        if (!ticket) {
-          return i.reply({ content: 'Dit is geen actief ticket.', ephemeral: true });
-        }
-
+        if (!ticket) return i.reply({ content: 'Dit is geen actief ticket.', ephemeral: true });
         const isOwner = ticket.userId === i.user.id;
         const isStaff = i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID);
-
-        if (!isOwner && !isStaff) {
-          return i.reply({ content: 'Je mag dit ticket niet sluiten.', ephemeral: true });
-        }
-
-        await i.reply({ content: '🔒 Ticket wordt gesloten en transcript wordt opgeslagen...' });
-
+        if (!isOwner && !isStaff) return i.reply({ content: 'Je mag dit ticket niet sluiten.', ephemeral: true });
+        await i.reply({ content: '🔒 Ticket wordt gesloten...' });
         try {
           const { html, aantalBerichten } = await maakTranscript(i.channel);
           const buffer = Buffer.from(html, 'utf-8');
           const attachment = new AttachmentBuilder(buffer, { name: `transcript-${i.channel.name}.html` });
-
           const transcriptChannel = await client.channels.fetch(TICKET_TRANSCRIPT_CHANNEL_ID);
           const cat = TICKET_CATEGORIES[ticket.categorie];
-
           const transcriptEmbed = new EmbedBuilder()
-            .setTitle('Ticket Transcript')
-            .setColor(cat ? cat.kleur : 0x5865f2)
-            .setThumbnail(LOGO)
+            .setTitle('Ticket Transcript').setColor(cat ? cat.kleur : 0x5865f2).setThumbnail(LOGO)
             .addFields(
               { name: 'Kanaal', value: `#${i.channel.name}`, inline: true },
               { name: 'Klant', value: `<@${ticket.userId}>`, inline: true },
               { name: 'Gesloten door', value: `<@${i.user.id}>`, inline: true },
               { name: 'Categorie', value: cat ? cat.naam : 'Onbekend', inline: true },
               { name: 'Berichten', value: `${aantalBerichten}`, inline: true }
-            )
-            .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
-            .setTimestamp();
-
-          await transcriptChannel.send({
-            embeds: [transcriptEmbed],
-            files: [attachment],
-          });
-        } catch (e) {
-          console.error('Kon transcript niet maken:', e.message);
-        }
-
+            ).setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
+          await transcriptChannel.send({ embeds: [transcriptEmbed], files: [attachment] });
+        } catch (e) {}
         await removeTicket(i.channelId);
-
-        setTimeout(async () => {
-          try {
-            await i.channel.delete('Ticket gesloten');
-          } catch (e) {
-            console.error('Kon ticket kanaal niet verwijderen:', e.message);
-          }
-        }, 5000);
-      } catch (e) {
-        console.error('Ticket sluiten fout:', e);
-        await i.reply({ content: `Fout: ${e.message}`, ephemeral: true });
-      }
+        setTimeout(async () => { try { await i.channel.delete('Ticket gesloten'); } catch (e) {} }, 5000);
+      } catch (e) { await i.reply({ content: `Fout: ${e.message}`, ephemeral: true }); }
       return;
     }
 
-    // Suggestie
     if (i.customId.startsWith('suggest_approve_') || i.customId.startsWith('suggest_reject_')) {
       const messageId = i.customId.split('_').pop();
-
-      if (!i.member.roles.cache.has(REQUIRED_ROLE_ID)) {
-        return i.reply({
-          content: `Je hebt de <@&${REQUIRED_ROLE_ID}> rol nodig om te stemmen.`,
-          ephemeral: true,
-        });
-      }
-
+      if (!i.member.roles.cache.has(REQUIRED_ROLE_ID)) return i.reply({ content: `Je hebt de <@&${REQUIRED_ROLE_ID}> rol nodig om te stemmen.`, ephemeral: true });
       try {
         const suggestions = await getSuggestions();
         const s = suggestions[messageId];
-
         if (!s) return i.reply({ content: 'Deze suggestie bestaat niet meer.', ephemeral: true });
-
         const isApprove = i.customId.startsWith('suggest_approve_');
         const userId = i.user.id;
-
         s.approve = s.approve.filter(id => id !== userId);
         s.reject = s.reject.filter(id => id !== userId);
-
         if (isApprove) s.approve.push(userId);
         else s.reject.push(userId);
-
         await saveSuggestions(suggestions);
-
-        await i.update({
-          embeds: [buildSuggestieEmbed(s)],
-          components: [buildSuggestieRow(messageId, s)],
-        });
-
-        await logVote(
-          userId,
-          isApprove ? 'approve' : 'reject',
-          `suggestie: **${s.tekst.slice(0, 80)}${s.tekst.length > 80 ? '...' : ''}**`
-        );
-      } catch (e) {
-        console.error('Suggestie stem fout:', e);
-        await i.reply({ content: `Fout: ${e.message}`, ephemeral: true });
-      }
+        await i.update({ embeds: [buildSuggestieEmbed(s)], components: [buildSuggestieRow(messageId, s)] });
+        await logVote(userId, isApprove ? 'approve' : 'reject', `suggestie: **${s.tekst.slice(0, 80)}${s.tekst.length > 80 ? '...' : ''}**`);
+      } catch (e) { await i.reply({ content: `Fout: ${e.message}`, ephemeral: true }); }
       return;
     }
 
-    // Review knoppen
     const review = reviews.get(i.user.id);
-    if (!review) {
-      return i.reply({ content: 'Deze review is verlopen. Gebruik /review opnieuw.', ephemeral: true });
-    }
+    if (!review) return i.reply({ content: 'Deze review is verlopen. Gebruik /review opnieuw.', ephemeral: true });
 
     if (i.customId.startsWith('star_')) {
       const n = parseInt(i.customId.split('_')[1]);
@@ -1682,45 +1125,21 @@ client.on('interactionCreate', async (i) => {
     }
 
     if (i.customId === 'submit') {
-      if (!review.rating) {
-        return i.reply({ content: 'Kies eerst een aantal sterren.', ephemeral: true });
-      }
-
+      if (!review.rating) return i.reply({ content: 'Kies eerst een aantal sterren.', ephemeral: true });
       await i.deferUpdate();
-
       let nummer;
-      try {
-        nummer = await volgendNummer(i.channel);
-      } catch (e) {
-        console.error('Kon nummer niet bepalen:', e);
-        nummer = '?';
-      }
-
+      try { nummer = await volgendNummer(i.channel); } catch (e) { nummer = '?'; }
       if (nummer !== '?') {
-        try {
-          await schrijfCounter(nummer);
-          cachedCounter = nummer;
-        } catch (e) {
-          console.error('Kon nummer niet opslaan:', e.message);
-        }
+        try { await schrijfCounter(nummer); cachedCounter = nummer; } catch (e) {}
       }
-
       const embed = new EmbedBuilder()
-        .setTitle(`Review #${nummer}`)
-        .setColor(0xffd700)
-        .setTimestamp()
-        .setAuthor({
-          name: i.user.displayName,
-          iconURL: i.user.displayAvatarURL(),
-        })
+        .setTitle(`Review #${nummer}`).setColor(0xffd700).setTimestamp()
+        .setAuthor({ name: i.user.displayName, iconURL: i.user.displayAvatarURL() })
         .addFields(
           { name: 'Product', value: review.product },
           { name: 'Beoordeling', value: `${sterren(review.rating)} (${review.rating}/5)` },
           { name: 'Extra', value: review.extra }
-        )
-        .setThumbnail(LOGO)
-        .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
-
+        ).setThumbnail(LOGO).setFooter({ text: 'Vexora.cc', iconURL: LOGO });
       await i.editReply({ components: [] });
       await i.channel.send({ embeds: [embed] });
       reviews.delete(i.user.id);
@@ -1731,20 +1150,14 @@ client.on('interactionCreate', async (i) => {
 // ===== Member leave =====
 client.on('guildMemberRemove', async (member) => {
   if (member.guild.id !== GUILD_ID) return;
-
   try {
     const purchases = await getPurchases();
     const had = purchases.find(p => p.userId === member.id);
     if (!had) return;
-
     const filtered = purchases.filter(p => p.userId !== member.id);
     await savePurchases(filtered);
     await updateOverzicht();
-
-    console.log(`${member.user.tag} heeft de server verlaten — licentie verwijderd uit overzicht`);
-  } catch (e) {
-    console.error('Fout bij guildMemberRemove:', e.message);
-  }
+  } catch (e) {}
 });
 
 // ===== Channel delete =====
@@ -1754,38 +1167,31 @@ client.on('channelDelete', async (channel) => {
     if (tickets[channel.id]) {
       delete tickets[channel.id];
       await saveTickets(tickets);
-      console.log(`Ticket ${channel.name} opgeruimd uit database`);
     }
-  } catch (e) {
-    console.error('Fout bij channelDelete:', e.message);
-  }
+  } catch (e) {}
 });
 
-// ===== Voice state: opnieuw joinen als we gekickt worden =====
+// ===== Voice state: rejoin als gekickt =====
 client.on('voiceStateUpdate', async (oldState, newState) => {
   if (newState.id !== client.user.id) return;
-
   const wasIn = oldState.channelId === VOICE_CHANNEL_ID;
   const isIn = newState.channelId === VOICE_CHANNEL_ID;
 
-  // We zijn weggehaald uit het kanaal → opnieuw joinen
   if (wasIn && !isIn) {
-    console.log('Uit voice kanaal gehaald — opnieuw verbinden...');
+    console.log('Uit voice gehaald — opnieuw verbinden...');
     setTimeout(joinVoice, 3000);
     return;
   }
 
-  // We zijn in het kanaal — zorg dat mute + deaf aan staan
   if (isIn) {
     try {
       if (!newState.selfMute) await newState.setSelfMute(true).catch(() => {});
       if (!newState.selfDeaf) await newState.setSelfDeaf(true).catch(() => {});
-    } catch (e) {
-      // stil falen
-    }
+    } catch (e) {}
   }
 });
 
+// ===== Ready =====
 client.once('ready', async () => {
   console.log(`online als ${client.user.tag}`);
   startStatusInterval();
