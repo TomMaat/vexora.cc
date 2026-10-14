@@ -13,15 +13,6 @@ const {
   REST,
   Routes,
 } = require('discord.js');
-const {
-  joinVoiceChannel,
-  getVoiceConnection,
-  createAudioPlayer,
-  createAudioResource,
-  VoiceConnectionStatus,
-  entersState,
-} = require('@discordjs/voice');
-const { Readable } = require('stream');
 const http = require('http');
 
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -46,7 +37,6 @@ const TICKET_SUPPORT_ROLE_ID = '1554510750092099688';
 const TICKET_TRANSCRIPT_CHANNEL_ID = '1554510754852511845';
 const LEGIT_CHANNEL_ID = '1559585421489344513';
 const VOTE_LOG_CHANNEL_ID = '1559588394336653332';
-const VOICE_CHANNEL_ID = '1554510753669709876';
 const PRODUCT = 'Vexora External + Bypass';
 const STATUS_INTERVAL = 8000;
 
@@ -55,7 +45,6 @@ const TICKET_CATEGORIES = {
   purchase: { naam: 'Purchase', prefix: 'purchase', categoryId: '1559570790398042133', emoji: '🛒', kleur: 0x00ff88 },
   bug: { naam: 'Bug', prefix: 'bug', categoryId: '1559570848279429290', emoji: '⚠️', kleur: 0xff4444 },
 };
-// =========================
 
 // ===== HTTP server + keep-alive =====
 http.createServer((req, res) => {
@@ -63,27 +52,20 @@ http.createServer((req, res) => {
   res.end('ok');
 }).listen(PORT);
 
-// Interne self-ping (cron-job.org doet de externe ping)
 const SELF_URL = process.env.RENDER_EXTERNAL_URL;
 if (SELF_URL) {
-  setInterval(() => {
-    fetch(SELF_URL).catch(() => {});
-  }, 12 * 60 * 1000);
+  setInterval(() => fetch(SELF_URL).catch(() => {}), 12 * 60 * 1000);
   console.log(`Keep-alive self-ping gestart voor ${SELF_URL}`);
 }
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
-  presence: {
-    status: 'online',
-    activities: [{ name: 'Vexora.cc', type: 3 }],
-  },
+  presence: { status: 'online', activities: [{ name: 'Vexora.cc', type: 3 }] },
 });
 const reviews = new Map();
 
 // ===== Plans =====
 const PLANS = {
-  '1 dag': 36 * 60 * 60 * 1000,
   '1 week': 8.5 * 24 * 60 * 60 * 1000,
   '1 maand': 30.5 * 24 * 60 * 60 * 1000,
   'lifetime': null,
@@ -111,16 +93,13 @@ function formatResterend(eindTijd) {
   if (uren > 0) return `${uren}u ${minuten}m`;
   return `${minuten}m`;
 }
-// ==============
 
 // ===== Commands =====
 const commands = [
   {
     name: 'review',
     description: 'Schrijf een review voor Vexora External + Bypass',
-    options: [
-      { name: 'extra', description: 'Vertel kort je ervaring', type: 3, required: true },
-    ],
+    options: [{ name: 'extra', description: 'Vertel kort je ervaring', type: 3, required: true }],
   },
   {
     name: 'purchase',
@@ -130,7 +109,6 @@ const commands = [
       {
         name: 'plan', description: 'Welk plan', type: 3, required: true,
         choices: [
-          { name: '1 dag', value: '1 dag' },
           { name: '1 week', value: '1 week' },
           { name: '1 maand', value: '1 maand' },
           { name: 'Lifetime', value: 'lifetime' },
@@ -153,19 +131,14 @@ const commands = [
   {
     name: 'removekruis',
     description: 'Verwijder een aantal kruisjes (❌) van de legit poll',
-    options: [
-      { name: 'aantal', description: 'Hoeveel kruisjes wil je verwijderen?', type: 4, required: true, min_value: 1 },
-    ],
+    options: [{ name: 'aantal', description: 'Hoeveel kruisjes wil je verwijderen?', type: 4, required: true, min_value: 1 }],
   },
 ];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
-
 (async () => {
   try {
-    console.log('global commands wissen...');
     await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
-    console.log('guild commands registreren...');
     await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
     console.log('commands geladen');
   } catch (e) { console.error(e); }
@@ -283,11 +256,9 @@ async function logVote(userId, type, doel) {
   try {
     const channel = await client.channels.fetch(VOTE_LOG_CHANNEL_ID);
     if (!channel) return;
-    const emoji = type === 'approve' ? '✅' : '❌';
-    const tekst = type === 'approve' ? 'een vinkje' : 'een kruisje';
     const embed = new EmbedBuilder()
       .setColor(type === 'approve' ? 0x00ff88 : 0xff4444)
-      .setDescription(`<@${userId}> heeft ${emoji} ${tekst} gestemd op ${doel}`)
+      .setDescription(`<@${userId}> heeft ${type === 'approve' ? '✅ een vinkje' : '❌ een kruisje'} gestemd op ${doel}`)
       .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
       .setTimestamp();
     await channel.send({ embeds: [embed] });
@@ -317,8 +288,8 @@ async function scanKanaal(channel) {
 }
 
 async function volgendNummer(channel) {
-  try { const c = await leesCounter(); return c + 1; }
-  catch (e) { const h = await scanKanaal(channel); return h + 1; }
+  try { return (await leesCounter()) + 1; }
+  catch (e) { return (await scanKanaal(channel)) + 1; }
 }
 
 // ===== Status =====
@@ -362,8 +333,7 @@ async function checkRolVerval() {
     const purchases = await getPurchases();
     const nu = Date.now();
     for (const p of purchases) {
-      if (p.eindTijd === null) continue;
-      if (p.eindTijd > nu) continue;
+      if (p.eindTijd === null || p.eindTijd > nu) continue;
       try {
         const member = await guild.members.fetch(p.userId);
         if (member && member.roles.cache.has(REQUIRED_ROLE_ID)) {
@@ -379,118 +349,6 @@ async function checkRolVerval() {
 function startVervalInterval() {
   checkRolVerval();
   setInterval(checkRolVerval, 60000);
-}
-
-// ===== Voice =====
-function maakStilleBron() {
-  const sampleRate = 48000;
-  const numSamples = Math.floor(sampleRate * 0.02);
-  const dataSize = numSamples * 2 * 2;
-  const buffer = Buffer.alloc(44 + dataSize);
-  buffer.write('RIFF', 0);
-  buffer.writeUInt32LE(36 + dataSize, 4);
-  buffer.write('WAVE', 8);
-  buffer.write('fmt ', 12);
-  buffer.writeUInt32LE(16, 16);
-  buffer.writeUInt16LE(1, 20);
-  buffer.writeUInt16LE(2, 22);
-  buffer.writeUInt32LE(sampleRate, 24);
-  buffer.writeUInt32LE(sampleRate * 2 * 2, 28);
-  buffer.writeUInt16LE(2 * 2, 32);
-  buffer.writeUInt16LE(16, 34);
-  buffer.write('data', 36);
-  buffer.writeUInt32LE(dataSize, 40);
-  return createAudioResource(Readable.from(buffer));
-}
-
-let silenceInterval = null;
-
-async function joinVoice() {
-  try {
-    const channel = await client.channels.fetch(VOICE_CHANNEL_ID);
-    if (!channel || !channel.isVoiceBased()) {
-      console.error('Voice kanaal niet gevonden');
-      return;
-    }
-    const guild = channel.guild;
-    const me = guild.members.me;
-
-    if (me && me.voice && me.voice.channelId === VOICE_CHANNEL_ID) {
-      if (!me.voice.selfMute) await me.voice.setSelfMute(true).catch(() => {});
-      if (!me.voice.selfDeaf) await me.voice.setSelfDeaf(true).catch(() => {});
-      return;
-    }
-
-    const bestaand = getVoiceConnection(guild.id);
-    if (bestaand) { try { bestaand.destroy(); } catch (e) {} }
-
-    const connection = joinVoiceChannel({
-      channelId: VOICE_CHANNEL_ID,
-      guildId: guild.id,
-      adapterCreator: guild.voiceAdapterCreator,
-      selfMute: true,
-      selfDeaf: true,
-    });
-
-    try {
-      await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
-      console.log('🔇 Voice verbinding ready');
-    } catch (e) {
-      console.error('Voice ready timeout');
-    }
-
-    const player = createAudioPlayer();
-    connection.subscribe(player);
-
-    // Reset Discord's 2-min idle timer
-    if (silenceInterval) clearInterval(silenceInterval);
-    silenceInterval = setInterval(() => {
-      try {
-        if (connection.state.status === VoiceConnectionStatus.Ready) {
-          player.play(maakStilleBron());
-        }
-      } catch (e) {}
-    }, 60_000);
-
-    // Direct een keer spelen
-    setTimeout(() => {
-      try {
-        if (connection.state.status === VoiceConnectionStatus.Ready) {
-          player.play(maakStilleBron());
-        }
-      } catch (e) {}
-    }, 3000);
-
-    connection.on(VoiceConnectionStatus.Disconnected, async () => {
-      if (silenceInterval) { clearInterval(silenceInterval); silenceInterval = null; }
-      try {
-        await Promise.race([
-          entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-          entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
-        ]);
-      } catch {
-        try { connection.destroy(); } catch (e) {}
-        setTimeout(joinVoice, 3000);
-      }
-    });
-
-    console.log(`🔇 Verbonden met ${channel.name} (mute + deaf + stilte frames)`);
-  } catch (e) {
-    console.error('Kon niet joinen in voice:', e.message);
-    setTimeout(joinVoice, 10000);
-  }
-}
-
-function startVoiceInterval() {
-  setInterval(async () => {
-    try {
-      const guild = await client.guilds.fetch(GUILD_ID);
-      const me = guild.members.me;
-      if (!me || !me.voice || me.voice.channelId !== VOICE_CHANNEL_ID) {
-        await joinVoice();
-      }
-    } catch (e) {}
-  }, 30_000);
 }
 
 // ===== Kanaal schoonmaken =====
@@ -527,7 +385,7 @@ async function bouwOverzichtEmbed() {
     .setThumbnail(LOGO)
     .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
     .setTimestamp();
-  for (const plan of ['1 dag', '1 week', '1 maand', 'Lifetime']) {
+  for (const plan of ['1 week', '1 maand', 'Lifetime']) {
     const lijst = perPlan[plan] || [];
     let value = lijst.length === 0 ? '*Geen*' : '';
     for (const p of lijst) {
@@ -729,11 +587,9 @@ async function setupVerify() {
     if (!channel) return;
     await clearBotMessages(channel);
     const embed = new EmbedBuilder()
-      .setTitle('Verify')
-      .setColor(0x5865f2)
+      .setTitle('Verify').setColor(0x5865f2)
       .setDescription('Klik hieronder om toegang te krijgen tot de server.')
-      .setThumbnail(LOGO)
-      .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
+      .setThumbnail(LOGO).setFooter({ text: 'Vexora.cc', iconURL: LOGO });
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('verify_button').setLabel('Verify').setEmoji('✅').setStyle(ButtonStyle.Success)
     );
@@ -748,13 +604,11 @@ async function setupPricing() {
     if (!channel) return;
     await clearBotMessages(channel);
     const embed = new EmbedBuilder()
-      .setTitle('Vexora.cc Private')
-      .setColor(0x5865f2)
-      .setThumbnail(LOGO)
+      .setTitle('Vexora.cc Private').setColor(0x5865f2).setThumbnail(LOGO)
       .setDescription('> Premium external cheat met advanced bypass.\n> ⚡ Snelle levering • 🔒 Veilig • 🕐 24/7 Support')
       .addFields(
-        { name: '💰 Pricing', value: '```\n1 Day     →  €2.50\n1 Week    →  €7.50\n1 Month   →  €20.00\nLifetime  →  €60.00\n```', inline: false },
-        { name: '🛡️ Product', value: '> • External Cheat\n> • Advanced bypass\n> • Daily Updates\n> • Easy to use interface\n> • 24/7 Support', inline: false },
+        { name: '💰 Pricing', value: '```\n1 Week    →  €7.50\n1 Month   →  €20.00\nLifetime  →  €60.00\n```', inline: false },
+        { name: '🛡️ Product', value: '> • External Cheat\n> • Advanced bypass — removes all traces after execution\n> • Daily Updates\n> • Easy to use interface\n> • 24/7 Support', inline: false },
         { name: '👥 Group Deals', value: '```\nDuo    →  €30 per person\nTrio   →  €20 per person\nSquad  →  €15 per person\nMore?  →  Open a ticket\n```', inline: false }
       )
       .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
@@ -769,14 +623,11 @@ async function setupTicketPanel() {
     if (!channel) return;
     await clearBotMessages(channel);
     const embed = new EmbedBuilder()
-      .setTitle('Tickets')
-      .setColor(0x5865f2)
+      .setTitle('Tickets').setColor(0x5865f2)
       .setDescription('Kies hieronder een categorie om een ticket te openen.\n\n> ⚡ Snelle levering\n> 🔒 Veilig & betrouwbaar\n> 🕐 24/7 Support')
-      .setThumbnail(LOGO)
-      .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
+      .setThumbnail(LOGO).setFooter({ text: 'Vexora.cc', iconURL: LOGO });
     const menu = new StringSelectMenuBuilder()
-      .setCustomId('ticket_category_select')
-      .setPlaceholder('Categorie...')
+      .setCustomId('ticket_category_select').setPlaceholder('Categorie...')
       .addOptions([
         { label: 'Support', value: 'support', emoji: '🎫' },
         { label: 'Purchase', value: 'purchase', emoji: '🛒' },
@@ -833,8 +684,7 @@ function sterRow(gekozen) {
   for (let i = 1; i <= 5; i++) {
     row.addComponents(
       new ButtonBuilder()
-        .setCustomId(`star_${i}`)
-        .setLabel(`${i} ⭐`)
+        .setCustomId(`star_${i}`).setLabel(`${i} ⭐`)
         .setStyle(gekozen === i ? ButtonStyle.Success : ButtonStyle.Secondary)
         .setDisabled(gekozen !== null && gekozen !== i)
     );
@@ -1171,26 +1021,6 @@ client.on('channelDelete', async (channel) => {
   } catch (e) {}
 });
 
-// ===== Voice state: rejoin als gekickt =====
-client.on('voiceStateUpdate', async (oldState, newState) => {
-  if (newState.id !== client.user.id) return;
-  const wasIn = oldState.channelId === VOICE_CHANNEL_ID;
-  const isIn = newState.channelId === VOICE_CHANNEL_ID;
-
-  if (wasIn && !isIn) {
-    console.log('Uit voice gehaald — opnieuw verbinden...');
-    setTimeout(joinVoice, 3000);
-    return;
-  }
-
-  if (isIn) {
-    try {
-      if (!newState.selfMute) await newState.setSelfMute(true).catch(() => {});
-      if (!newState.selfDeaf) await newState.setSelfDeaf(true).catch(() => {});
-    } catch (e) {}
-  }
-});
-
 // ===== Ready =====
 client.once('ready', async () => {
   console.log(`online als ${client.user.tag}`);
@@ -1204,9 +1034,6 @@ client.once('ready', async () => {
   await setupPricing();
   await setupTicketPanel();
   await setupLegitPoll();
-
-  await joinVoice();
-  startVoiceInterval();
 });
 
 client.login(TOKEN);
