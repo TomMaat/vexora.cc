@@ -23,7 +23,7 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const LOGO = 'https://cdn.discordapp.com/attachments/1557498332262301716/1558123583371481139/Vexora.png?ex=6ace3faa&is=6accee2a&hm=c27628f8d9c71dab36f1041308bc32a630c03fadc49bf418913598bd4944c7ea&';
 const PORT = process.env.PORT || 3000;
 
-// ===== Instellingen =====
+// ===== Settings =====
 const REVIEW_CHANNEL_ID = '1559313542509887569';
 const REQUIRED_ROLE_ID = '1556357822998913094';
 const PURCHASE_ROLE_ID = '1559485646991654922';
@@ -37,13 +37,14 @@ const TICKET_SUPPORT_ROLE_ID = '1554510750092099688';
 const TICKET_TRANSCRIPT_CHANNEL_ID = '1554510754852511845';
 const LEGIT_CHANNEL_ID = '1559585421489344513';
 const VOTE_LOG_CHANNEL_ID = '1559588394336653332';
+const BAN_LOG_CHANNEL_ID = '1560402931667435601';
 const PRODUCT = 'Vexora External + Bypass';
 const STATUS_INTERVAL = 8000;
 
 const TICKET_CATEGORIES = {
-  support: { naam: 'Support', prefix: 'support', categoryId: '1559570734664122488', emoji: '🎫', kleur: 0x3498db },
-  purchase: { naam: 'Purchase', prefix: 'purchase', categoryId: '1559570790398042133', emoji: '🛒', kleur: 0x00ff88 },
-  bug: { naam: 'Bug', prefix: 'bug', categoryId: '1559570848279429290', emoji: '⚠️', kleur: 0xff4444 },
+  support: { name: 'Support', prefix: 'support', categoryId: '1559570734664122488', emoji: '🎫', color: 0x3498db },
+  purchase: { name: 'Purchase', prefix: 'purchase', categoryId: '1559570790398042133', emoji: '🛒', color: 0x00ff88 },
+  bug: { name: 'Bug', prefix: 'bug', categoryId: '1559570848279429290', emoji: '⚠️', color: 0xff4444 },
 };
 
 // ===== HTTP server + keep-alive =====
@@ -55,7 +56,7 @@ http.createServer((req, res) => {
 const SELF_URL = process.env.RENDER_EXTERNAL_URL;
 if (SELF_URL) {
   setInterval(() => fetch(SELF_URL).catch(() => {}), 12 * 60 * 1000);
-  console.log(`Keep-alive self-ping gestart voor ${SELF_URL}`);
+  console.log(`Keep-alive self-ping started for ${SELF_URL}`);
 }
 
 const client = new Client({
@@ -67,35 +68,35 @@ const reviews = new Map();
 // ===== Plans =====
 const PLANS = {
   '1 week': 8.5 * 24 * 60 * 60 * 1000,
-  '1 maand': 30.5 * 24 * 60 * 60 * 1000,
+  '1 month': 30.5 * 24 * 60 * 60 * 1000,
   'lifetime': null,
 };
 
-function planDuurMs(plan) { return PLANS[plan]; }
+function planDurationMs(plan) { return PLANS[plan]; }
 
-function formatDuur(ms) {
+function formatDuration(ms) {
   if (ms === null) return 'Lifetime';
-  const dagen = Math.floor(ms / (24 * 60 * 60 * 1000));
-  const uren = Math.floor((ms % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
-  if (dagen > 0 && uren > 0) return `${dagen}d ${uren}u`;
-  if (dagen > 0) return `${dagen}d`;
-  return `${uren}u`;
+  const days = Math.floor(ms / (24 * 60 * 60 * 1000));
+  const hours = Math.floor((ms % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+  if (days > 0 && hours > 0) return `${days}d ${hours}h`;
+  if (days > 0) return `${days}d`;
+  return `${hours}h`;
 }
 
-function formatResterend(eindTijd) {
-  if (eindTijd === null) return 'Lifetime';
-  const over = eindTijd - Date.now();
-  if (over <= 0) return 'Verlopen';
-  const dagen = Math.floor(over / (24 * 60 * 60 * 1000));
-  const uren = Math.floor((over % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
-  const minuten = Math.floor((over % (60 * 60 * 1000)) / (60 * 1000));
-  if (dagen > 0) return `${dagen}d ${uren}u`;
-  if (uren > 0) return `${uren}u ${minuten}m`;
-  return `${minuten}m`;
+function formatRemaining(endTime) {
+  if (endTime === null) return 'Lifetime';
+  const left = endTime - Date.now();
+  if (left <= 0) return 'Expired';
+  const days = Math.floor(left / (24 * 60 * 60 * 1000));
+  const hours = Math.floor((left % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+  const minutes = Math.floor((left % (60 * 60 * 1000)) / (60 * 1000));
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
-// ===== Giveaway tijd parsen =====
-function parseGiveawayTime(input) {
+// ===== Time parsing =====
+function parseDuration(input) {
   const match = String(input).trim().toLowerCase().match(/^(\d+)\s*(s|m|h|d|w)$/);
   if (!match) return null;
   const n = parseInt(match[1]);
@@ -110,7 +111,7 @@ function parseGiveawayTime(input) {
   return n * multipliers[unit];
 }
 
-function formatGiveawayDuur(ms) {
+function formatShortDuration(ms) {
   if (ms >= 7 * 24 * 60 * 60 * 1000) return `${Math.round(ms / (7*24*60*60*1000))}w`;
   if (ms >= 24 * 60 * 60 * 1000) return `${Math.round(ms / (24*60*60*1000))}d`;
   if (ms >= 60 * 60 * 1000) return `${Math.round(ms / (60*60*1000))}h`;
@@ -118,67 +119,106 @@ function formatGiveawayDuur(ms) {
   return `${Math.round(ms / 1000)}s`;
 }
 
+const parseGiveawayTime = parseDuration;
+const formatGiveawayDuration = formatShortDuration;
+
 // ===== Commands =====
 const commands = [
   {
     name: 'review',
-    description: 'Schrijf een review voor Vexora External + Bypass',
-    options: [{ name: 'extra', description: 'Vertel kort je ervaring', type: 3, required: true }],
+    description: 'Write a review for Vexora External + Bypass',
+    options: [{ name: 'extra', description: 'Tell us briefly about your experience', type: 3, required: true }],
   },
   {
     name: 'purchase',
-    description: 'Ken een tijdelijke rol toe aan een gebruiker',
+    description: 'Assign a temporary role to a user',
     options: [
-      { name: 'user', description: 'De gebruiker', type: 6, required: true },
+      { name: 'user', description: 'The user', type: 6, required: true },
       {
-        name: 'plan', description: 'Welk plan', type: 3, required: true,
+        name: 'plan', description: 'Which plan', type: 3, required: true,
         choices: [
           { name: '1 week', value: '1 week' },
-          { name: '1 maand', value: '1 maand' },
+          { name: '1 month', value: '1 month' },
           { name: 'Lifetime', value: 'lifetime' },
         ],
       },
-      { name: 'key', description: 'De key/licentie voor de klant', type: 3, required: true },
+      { name: 'key', description: 'The key/license for the customer', type: 3, required: true },
     ],
   },
   {
     name: 'removelicense',
-    description: 'Verwijder de actieve licentie van een gebruiker',
-    options: [{ name: 'user', description: 'De gebruiker', type: 6, required: true }],
+    description: 'Remove the active license of a user',
+    options: [{ name: 'user', description: 'The user', type: 6, required: true }],
   },
   {
     name: 'suggestie',
-    description: 'Plaats een suggestie',
-    options: [{ name: 'tekst', description: 'Wat is je suggestie?', type: 3, required: true }],
+    description: 'Submit a suggestion',
+    options: [{ name: 'tekst', description: 'What is your suggestion?', type: 3, required: true }],
   },
-  { name: 'refresh', description: 'Plaats het overzicht opnieuw' },
+  { name: 'refresh', description: 'Repost the overview' },
   {
     name: 'removekruis',
-    description: 'Verwijder een aantal kruisjes (❌) van de legit poll',
-    options: [{ name: 'aantal', description: 'Hoeveel kruisjes wil je verwijderen?', type: 4, required: true, min_value: 1 }],
+    description: 'Remove a number of ❌ votes from the legit poll',
+    options: [{ name: 'aantal', description: 'How many crosses to remove?', type: 4, required: true, min_value: 1 }],
   },
   {
     name: 'giveaway',
-    description: 'Start een giveaway',
+    description: 'Start a giveaway',
     options: [
-      { name: 'winners', description: 'Aantal winnaars', type: 4, required: true, min_value: 1, max_value: 50 },
-      { name: 'item', description: 'Wat is de prijs?', type: 3, required: true },
-      { name: 'time', description: 'Duur (bijv. 30s, 5m, 1h, 1d, 1w)', type: 3, required: true },
+      { name: 'winners', description: 'Number of winners', type: 4, required: true, min_value: 1, max_value: 50 },
+      { name: 'item', description: 'What is the prize?', type: 3, required: true },
+      { name: 'time', description: 'Duration (e.g. 30s, 5m, 1h, 1d, 1w)', type: 3, required: true },
     ],
   },
   {
     name: 'reroll',
-    description: 'Trek opnieuw winnaars voor de laatste giveaway in dit kanaal',
+    description: 'Reroll the last giveaway in this channel',
     options: [
-      { name: 'winners', description: 'Aantal nieuwe winnaars', type: 4, required: true, min_value: 1, max_value: 50 },
+      { name: 'winners', description: 'Number of new winners', type: 4, required: true, min_value: 1, max_value: 50 },
     ],
   },
   {
     name: 'clear',
-    description: 'Verwijder een aantal berichten uit dit kanaal',
+    description: 'Delete a number of messages from this channel',
     options: [
-      { name: 'aantal', description: 'Aantal berichten (1-100)', type: 4, required: true, min_value: 1, max_value: 100 },
+      { name: 'amount', description: 'Number of messages (1-100)', type: 4, required: true, min_value: 1, max_value: 100 },
     ],
+  },
+  {
+    name: 'ban',
+    description: 'Ban a user (permanent or temporary)',
+    options: [
+      { name: 'user', description: 'The user', type: 6, required: true },
+      { name: 'duration', description: 'Duration (e.g. 1h, 1d, 1w) — empty = permanent', type: 3, required: false },
+      { name: 'reason', description: 'Reason', type: 3, required: false },
+    ],
+  },
+  {
+    name: 'unban',
+    description: 'Unban a user by their Discord ID',
+    options: [
+      { name: 'user_id', description: 'The Discord user ID', type: 3, required: true },
+      { name: 'reason', description: 'Reason', type: 3, required: false },
+    ],
+  },
+  {
+    name: 'add',
+    description: 'Add a user to this ticket',
+    options: [{ name: 'user', description: 'The user', type: 6, required: true }],
+  },
+  {
+    name: 'remove',
+    description: 'Remove a user from this ticket',
+    options: [{ name: 'user', description: 'The user', type: 6, required: true }],
+  },
+  {
+    name: 'close',
+    description: 'Close this ticket',
+  },
+  {
+    name: 'rename',
+    description: 'Rename this ticket',
+    options: [{ name: 'name', description: 'New name', type: 3, required: true }],
   },
 ];
 
@@ -187,16 +227,16 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
     await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-    console.log('commands geladen');
+    console.log('Commands loaded');
   } catch (e) { console.error(e); }
 })();
 
 // ===== Gist storage =====
-async function leesGist() {
+async function readGist() {
   const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
     headers: { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' },
   });
-  if (!res.ok) throw new Error(`Gist read faalde: ${res.status}`);
+  if (!res.ok) throw new Error(`Gist read failed: ${res.status}`);
   const data = await res.json();
   const parsed = JSON.parse(data.files['reviews.json'].content);
   return {
@@ -209,10 +249,11 @@ async function leesGist() {
     legitMessageId: parsed.legitMessageId || null,
     giveaways: parsed.giveaways || {},
     laatsteGiveaways: parsed.laatsteGiveaways || {},
+    bans: parsed.bans || [],
   };
 }
 
-async function schrijfGist(data) {
+async function writeGist(data) {
   const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
     method: 'PATCH',
     headers: {
@@ -222,24 +263,24 @@ async function schrijfGist(data) {
     },
     body: JSON.stringify({ files: { 'reviews.json': { content: JSON.stringify(data, null, 2) } } }),
   });
-  if (!res.ok) throw new Error(`Gist write faalde: ${res.status}`);
+  if (!res.ok) throw new Error(`Gist write failed: ${res.status}`);
 }
 
-async function leesCounter() { const d = await leesGist(); return d.counter; }
-async function schrijfCounter(n) { const d = await leesGist(); d.counter = n; await schrijfGist(d); }
+async function readCounter() { const d = await readGist(); return d.counter; }
+async function writeCounter(n) { const d = await readGist(); d.counter = n; await writeGist(d); }
 
 // ===== Purchase =====
-async function getPurchases() { const d = await leesGist(); return d.purchases; }
-async function savePurchases(p) { const d = await leesGist(); d.purchases = p; await schrijfGist(d); }
+async function getPurchases() { const d = await readGist(); return d.purchases; }
+async function savePurchases(p) { const d = await readGist(); d.purchases = p; await writeGist(d); }
 
 async function addPurchase(userId, plan, key) {
   const purchases = await getPurchases();
-  const duur = planDuurMs(plan);
-  const eindTijd = duur === null ? null : Date.now() + duur;
+  const duration = planDurationMs(plan);
+  const endTime = duration === null ? null : Date.now() + duration;
   const filtered = purchases.filter(p => p.userId !== userId);
-  filtered.push({ userId, plan, key, eindTijd, gestart: Date.now() });
+  filtered.push({ userId, plan, key, eindTijd: endTime, gestart: Date.now() });
   await savePurchases(filtered);
-  return { eindTijd, duur };
+  return { endTime, duration };
 }
 
 async function removePurchase(userId) {
@@ -249,25 +290,89 @@ async function removePurchase(userId) {
   return purchases.find(p => p.userId === userId);
 }
 
-// ===== Suggestie =====
-async function getSuggestions() { const d = await leesGist(); return d.suggestions; }
-async function saveSuggestions(s) { const d = await leesGist(); d.suggestions = s; await schrijfGist(d); }
+// ===== Bans =====
+async function getBans() { const d = await readGist(); return d.bans; }
+async function saveBans(b) { const d = await readGist(); d.bans = b; await writeGist(d); }
 
-function buildSuggestieEmbed(s) {
+async function addTemporaryBan(userId, guildId, endTime) {
+  const bans = await getBans();
+  bans.push({ userId, guildId, eindTijd: endTime, gestart: Date.now() });
+  await saveBans(bans);
+}
+
+async function removeBanRecord(userId, guildId) {
+  const bans = await getBans();
+  const filtered = bans.filter(b => !(b.userId === userId && b.guildId === guildId));
+  await saveBans(filtered);
+}
+
+async function checkBans() {
+  try {
+    const bans = await getBans();
+    const now = Date.now();
+    let changed = false;
+
+    for (const b of bans) {
+      if (b.eindTijd > now) continue;
+
+      try {
+        const guild = await client.guilds.fetch(b.guildId).catch(() => null);
+        if (guild) {
+          await guild.bans.remove(b.userId, 'Temporary ban expired').catch(() => {});
+          console.log(`Unban: ${b.userId} in ${b.guildId} (time expired)`);
+
+          try {
+            const logChannel = await client.channels.fetch(BAN_LOG_CHANNEL_ID);
+            if (logChannel) {
+              const embed = new EmbedBuilder()
+                .setColor(0x00ff88)
+                .setDescription(`🔓 <@${b.userId}> has been automatically unbanned (temporary ban expired)`)
+                .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+                .setTimestamp();
+              await logChannel.send({ embeds: [embed] });
+            }
+          } catch (e) {}
+        }
+      } catch (e) {
+        console.error(`Could not unban ${b.userId}:`, e.message);
+      }
+
+      changed = true;
+    }
+
+    if (changed) {
+      const stillActive = bans.filter(b => b.eindTijd > now);
+      await saveBans(stillActive);
+    }
+  } catch (e) {
+    console.error('Error in checkBans:', e.message);
+  }
+}
+
+function startBanInterval() {
+  checkBans();
+  setInterval(checkBans, 60000);
+}
+
+// ===== Suggestions =====
+async function getSuggestions() { const d = await readGist(); return d.suggestions; }
+async function saveSuggestions(s) { const d = await readGist(); d.suggestions = s; await writeGist(d); }
+
+function buildSuggestionEmbed(s) {
   return new EmbedBuilder()
-    .setTitle('Nieuwe Suggestie')
+    .setTitle('New Suggestion')
     .setColor(0x5865f2)
     .setThumbnail(LOGO)
     .setDescription(s.tekst)
     .addFields(
-      { name: 'Door', value: `<@${s.auteurId}>`, inline: true },
-      { name: 'Stemmen', value: `✅ ${s.approve.length}  •  ❌ ${s.reject.length}`, inline: true }
+      { name: 'By', value: `<@${s.auteurId}>`, inline: true },
+      { name: 'Votes', value: `✅ ${s.approve.length}  •  ❌ ${s.reject.length}`, inline: true }
     )
     .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
     .setTimestamp(s.gestart);
 }
 
-function buildSuggestieRow(messageId, s) {
+function buildSuggestionRow(messageId, s) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`suggest_approve_${messageId}`).setLabel(`✅ ${s.approve.length}`).setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`suggest_reject_${messageId}`).setLabel(`❌ ${s.reject.length}`).setStyle(ButtonStyle.Secondary)
@@ -275,10 +380,10 @@ function buildSuggestieRow(messageId, s) {
 }
 
 // ===== Legit poll =====
-async function getLegitVotes() { const d = await leesGist(); return d.legitVotes; }
-async function saveLegitVotes(v) { const d = await leesGist(); d.legitVotes = v; await schrijfGist(d); }
-async function getLegitMessageId() { const d = await leesGist(); return d.legitMessageId; }
-async function setLegitMessageId(id) { const d = await leesGist(); d.legitMessageId = id; await schrijfGist(d); }
+async function getLegitVotes() { const d = await readGist(); return d.legitVotes; }
+async function saveLegitVotes(v) { const d = await readGist(); d.legitVotes = v; await writeGist(d); }
+async function getLegitMessageId() { const d = await readGist(); return d.legitMessageId; }
+async function setLegitMessageId(id) { const d = await readGist(); d.legitMessageId = id; await writeGist(d); }
 
 function buildLegitEmbed(votes) {
   return new EmbedBuilder()
@@ -301,51 +406,51 @@ function buildLegitRow(votes) {
 }
 
 // ===== Vote log =====
-async function logVote(userId, type, doel) {
+async function logVote(userId, type, target) {
   try {
     const channel = await client.channels.fetch(VOTE_LOG_CHANNEL_ID);
     if (!channel) return;
     const embed = new EmbedBuilder()
       .setColor(type === 'approve' ? 0x00ff88 : 0xff4444)
-      .setDescription(`<@${userId}> heeft ${type === 'approve' ? '✅ een vinkje' : '❌ een kruisje'} gestemd op ${doel}`)
+      .setDescription(`<@${userId}> voted ${type === 'approve' ? '✅ approve' : '❌ reject'} on ${target}`)
       .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
       .setTimestamp();
     await channel.send({ embeds: [embed] });
-  } catch (e) { console.error('Kon vote log niet sturen:', e.message); }
+  } catch (e) { console.error('Could not send vote log:', e.message); }
 }
 
-// ===== Review nummer =====
-async function scanKanaal(channel) {
-  let hoogste = 0, laatsteId = null, doorzoeken = true;
-  while (doorzoeken) {
-    const opties = { limit: 100 };
-    if (laatsteId) opties.before = laatsteId;
-    const berichten = await channel.messages.fetch(opties);
-    if (berichten.size === 0) break;
-    for (const msg of berichten.values()) {
+// ===== Review number =====
+async function scanChannel(channel) {
+  let highest = 0, lastId = null, searching = true;
+  while (searching) {
+    const options = { limit: 100 };
+    if (lastId) options.before = lastId;
+    const messages = await channel.messages.fetch(options);
+    if (messages.size === 0) break;
+    for (const msg of messages.values()) {
       for (const embed of msg.embeds) {
         if (embed.title && embed.title.startsWith('Review #')) {
           const n = parseInt(embed.title.replace('Review #', ''));
-          if (!isNaN(n) && n > hoogste) hoogste = n;
+          if (!isNaN(n) && n > highest) highest = n;
         }
       }
     }
-    laatsteId = berichten.last().id;
-    if (berichten.size < 100) doorzoeken = false;
+    lastId = messages.last().id;
+    if (messages.size < 100) searching = false;
   }
-  return hoogste;
+  return highest;
 }
 
-async function volgendNummer(channel) {
-  try { return (await leesCounter()) + 1; }
-  catch (e) { return (await scanKanaal(channel)) + 1; }
+async function nextNumber(channel) {
+  try { return (await readCounter()) + 1; }
+  catch (e) { return (await scanChannel(channel)) + 1; }
 }
 
 // ===== Status =====
 let statusToggle = false;
 let cachedCounter = 0;
 
-async function haalMemberCount() {
+async function getMemberCount() {
   try {
     const guild = await client.guilds.fetch({ guild: GUILD_ID, force: true });
     return guild.memberCount;
@@ -355,7 +460,7 @@ async function haalMemberCount() {
 async function updateStatus() {
   try {
     if (statusToggle) {
-      const members = await haalMemberCount();
+      const members = await getMemberCount();
       client.user.setActivity(`${members} Members`, { type: 3 });
     } else {
       client.user.setActivity(`${cachedCounter} Reviews`, { type: 3 });
@@ -365,7 +470,7 @@ async function updateStatus() {
 }
 
 async function refreshCounterCache() {
-  try { cachedCounter = await leesCounter(); } catch (e) {}
+  try { cachedCounter = await readCounter(); } catch (e) {}
 }
 
 function startStatusInterval() {
@@ -375,85 +480,85 @@ function startStatusInterval() {
   setInterval(updateStatus, STATUS_INTERVAL);
 }
 
-// ===== Rol verval =====
-async function checkRolVerval() {
+// ===== Role expiry =====
+async function checkRoleExpiry() {
   try {
     const guild = await client.guilds.fetch(GUILD_ID);
     const purchases = await getPurchases();
-    const nu = Date.now();
+    const now = Date.now();
     for (const p of purchases) {
-      if (p.eindTijd === null || p.eindTijd > nu) continue;
+      if (p.eindTijd === null || p.eindTijd > now) continue;
       try {
         const member = await guild.members.fetch(p.userId);
         if (member && member.roles.cache.has(REQUIRED_ROLE_ID)) {
-          await member.roles.remove(REQUIRED_ROLE_ID, 'Plan verlopen');
+          await member.roles.remove(REQUIRED_ROLE_ID, 'Plan expired');
         }
       } catch (e) {}
     }
-    const nogActief = purchases.filter(p => p.eindTijd === null || p.eindTijd > nu);
-    if (nogActief.length !== purchases.length) await savePurchases(nogActief);
-  } catch (e) { console.error('Fout bij checkRolVerval:', e.message); }
+    const stillActive = purchases.filter(p => p.eindTijd === null || p.eindTijd > now);
+    if (stillActive.length !== purchases.length) await savePurchases(stillActive);
+  } catch (e) { console.error('Error in checkRoleExpiry:', e.message); }
 }
 
-function startVervalInterval() {
-  checkRolVerval();
-  setInterval(checkRolVerval, 60000);
+function startExpiryInterval() {
+  checkRoleExpiry();
+  setInterval(checkRoleExpiry, 60000);
 }
 
-// ===== Kanaal schoonmaken =====
+// ===== Clear bot messages =====
 async function clearBotMessages(channel) {
-  let laatsteId = null, doorzoeken = true;
-  while (doorzoeken) {
-    const opties = { limit: 100 };
-    if (laatsteId) opties.before = laatsteId;
-    const berichten = await channel.messages.fetch(opties);
-    if (berichten.size === 0) break;
-    const vanBot = berichten.filter(m => m.author.id === client.user.id);
-    for (const msg of vanBot.values()) await msg.delete().catch(() => {});
-    laatsteId = berichten.last().id;
-    if (berichten.size < 100) doorzoeken = false;
+  let lastId = null, searching = true;
+  while (searching) {
+    const options = { limit: 100 };
+    if (lastId) options.before = lastId;
+    const messages = await channel.messages.fetch(options);
+    if (messages.size === 0) break;
+    const botMsgs = messages.filter(m => m.author.id === client.user.id);
+    for (const msg of botMsgs.values()) await msg.delete().catch(() => {});
+    lastId = messages.last().id;
+    if (messages.size < 100) searching = false;
   }
 }
 
-// ===== Overzicht =====
-async function getOverzichtMessageId() { const d = await leesGist(); return d.overzichtMessageId; }
-async function setOverzichtMessageId(id) { const d = await leesGist(); d.overzichtMessageId = id; await schrijfGist(d); }
+// ===== Overview =====
+async function getOverviewMessageId() { const d = await readGist(); return d.overzichtMessageId; }
+async function setOverviewMessageId(id) { const d = await readGist(); d.overzichtMessageId = id; await writeGist(d); }
 
-async function bouwOverzichtEmbed() {
+async function buildOverviewEmbed() {
   const purchases = await getPurchases();
   const perPlan = {};
   for (const plan of Object.keys(PLANS)) perPlan[plan] = [];
   for (const p of purchases) {
-    const planNaam = p.plan === 'lifetime' ? 'Lifetime' : p.plan;
-    if (!perPlan[planNaam]) perPlan[planNaam] = [];
-    perPlan[planNaam].push(p);
+    const planName = p.plan === 'lifetime' ? 'lifetime' : p.plan;
+    if (!perPlan[planName]) perPlan[planName] = [];
+    perPlan[planName].push(p);
   }
   const embed = new EmbedBuilder()
-    .setTitle('Actieve Purchases')
+    .setTitle('Active Purchases')
     .setColor(0x5865f2)
     .setThumbnail(LOGO)
     .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
     .setTimestamp();
-  for (const plan of ['1 week', '1 maand', 'Lifetime']) {
-    const lijst = perPlan[plan] || [];
-    let value = lijst.length === 0 ? '*Geen*' : '';
-    for (const p of lijst) {
-      const resterend = formatResterend(p.eindTijd);
-      const key = p.key ? p.key : 'geen key';
-      value += `<@${p.userId}> — ${resterend} — \`${key}\`\n`;
+  for (const plan of ['1 week', '1 month', 'lifetime']) {
+    const list = perPlan[plan] || [];
+    let value = list.length === 0 ? '*None*' : '';
+    for (const p of list) {
+      const remaining = formatRemaining(p.eindTijd);
+      const key = p.key ? p.key : 'no key';
+      value += `<@${p.userId}> — ${remaining} — \`${key}\`\n`;
     }
     if (value.length > 1024) value = value.slice(0, 1020) + '...';
-    embed.addFields({ name: `**${plan}** (${lijst.length})`, value, inline: false });
+    embed.addFields({ name: `**${plan}** (${list.length})`, value, inline: false });
   }
   return embed;
 }
 
-async function updateOverzicht() {
+async function updateOverview() {
   try {
     const channel = await client.channels.fetch(PURCHASE_LOG_CHANNEL_ID);
     if (!channel) return;
-    const embed = await bouwOverzichtEmbed();
-    const messageId = await getOverzichtMessageId();
+    const embed = await buildOverviewEmbed();
+    const messageId = await getOverviewMessageId();
     if (messageId) {
       try {
         const msg = await channel.messages.fetch(messageId);
@@ -464,32 +569,32 @@ async function updateOverzicht() {
       } catch (e) {}
     }
     await clearBotMessages(channel);
-    const nieuw = await channel.send({ embeds: [embed] });
-    await setOverzichtMessageId(nieuw.id);
-  } catch (e) { console.error('Kon overzicht niet updaten:', e.message); }
+    const newMsg = await channel.send({ embeds: [embed] });
+    await setOverviewMessageId(newMsg.id);
+  } catch (e) { console.error('Could not update overview:', e.message); }
 }
 
-async function herstartOverzicht() {
+async function restartOverview() {
   try {
     const channel = await client.channels.fetch(PURCHASE_LOG_CHANNEL_ID);
     if (!channel) return;
     await clearBotMessages(channel);
-    const embed = await bouwOverzichtEmbed();
-    const nieuw = await channel.send({ embeds: [embed] });
-    await setOverzichtMessageId(nieuw.id);
-  } catch (e) { console.error('Kon overzicht niet herstarten:', e.message); }
+    const embed = await buildOverviewEmbed();
+    const newMsg = await channel.send({ embeds: [embed] });
+    await setOverviewMessageId(newMsg.id);
+  } catch (e) { console.error('Could not restart overview:', e.message); }
 }
 
-function startOverzichtInterval() {
-  updateOverzicht();
-  setInterval(updateOverzicht, 60000);
+function startOverviewInterval() {
+  updateOverview();
+  setInterval(updateOverview, 60000);
 }
 
 // ===== Giveaway =====
-async function getGiveaways() { const d = await leesGist(); return d.giveaways; }
-async function saveGiveaways(g) { const d = await leesGist(); d.giveaways = g; await schrijfGist(d); }
-async function getLaatsteGiveaways() { const d = await leesGist(); return d.laatsteGiveaways; }
-async function saveLaatsteGiveaways(l) { const d = await leesGist(); d.laatsteGiveaways = l; await schrijfGist(d); }
+async function getGiveaways() { const d = await readGist(); return d.giveaways; }
+async function saveGiveaways(g) { const d = await readGist(); d.giveaways = g; await writeGist(d); }
+async function getLastGiveaways() { const d = await readGist(); return d.laatsteGiveaways; }
+async function saveLastGiveaways(l) { const d = await readGist(); d.laatsteGiveaways = l; await writeGist(d); }
 
 function buildGiveawayEmbed(g) {
   return new EmbedBuilder()
@@ -497,57 +602,57 @@ function buildGiveawayEmbed(g) {
     .setColor(0xff73fa)
     .setThumbnail(LOGO)
     .setDescription(
-      `**Prijs:** ${g.item}\n` +
-      `**Winnaars:** ${g.winners}\n` +
-      `**Eindigt:** <t:${Math.floor(g.eindTijd / 1000)}:R>\n\n` +
-      `Reageer met 🎉 om mee te doen!`
+      `**Prize:** ${g.item}\n` +
+      `**Winners:** ${g.winners}\n` +
+      `**Ends:** <t:${Math.floor(g.eindTijd / 1000)}:R>\n\n` +
+      `React with 🎉 to enter!`
     )
-    .setFooter({ text: `Vexora.cc • Gehost door ${g.hostTag || 'onbekend'}`, iconURL: LOGO })
+    .setFooter({ text: `Vexora.cc • Hosted by ${g.hostTag || 'unknown'}`, iconURL: LOGO })
     .setTimestamp(g.gestart);
 }
 
-function buildGiveawayEndedEmbed(g, winnaars, isReroll = false) {
-  let winnaarTekst = 'Geen deelnemers';
-  if (winnaars.length > 0) {
-    winnaarTekst = winnaars.map(id => `<@${id}>`).join(', ');
+function buildGiveawayEndedEmbed(g, winners, isReroll = false) {
+  let winnerText = 'No participants';
+  if (winners.length > 0) {
+    winnerText = winners.map(id => `<@${id}>`).join(', ');
   }
   return new EmbedBuilder()
-    .setTitle(isReroll ? '🎉 Giveaway Rerolled 🎉' : '🎉 Giveaway Afgelopen 🎉')
+    .setTitle(isReroll ? '🎉 Giveaway Rerolled 🎉' : '🎉 Giveaway Ended 🎉')
     .setColor(0x00ff88)
     .setThumbnail(LOGO)
     .setDescription(
-      `**Prijs:** ${g.item}\n` +
-      `**${isReroll ? 'Nieuwe winnaars' : 'Winnaars'}:** ${winnaarTekst}\n\n` +
-      `Gefeliciteerd! 🎊`
+      `**Prize:** ${g.item}\n` +
+      `**${isReroll ? 'New winners' : 'Winners'}:** ${winnerText}\n\n` +
+      `Congratulations! 🎊`
     )
     .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
     .setTimestamp();
 }
 
-async function kiesWinnaars(bericht, aantal) {
-  const reaction = bericht.reactions.cache.get('🎉');
-  let deelnemers = [];
+async function pickWinners(message, amount) {
+  const reaction = message.reactions.cache.get('🎉');
+  let participants = [];
   if (reaction) {
     const users = await reaction.users.fetch();
-    deelnemers = users.filter(u => !u.bot).map(u => u.id);
+    participants = users.filter(u => !u.bot).map(u => u.id);
   }
-  const winnaars = [];
-  const pool = [...deelnemers];
-  const n = Math.min(aantal, pool.length);
+  const winners = [];
+  const pool = [...participants];
+  const n = Math.min(amount, pool.length);
   for (let k = 0; k < n; k++) {
     const idx = Math.floor(Math.random() * pool.length);
-    winnaars.push(pool.splice(idx, 1)[0]);
+    winners.push(pool.splice(idx, 1)[0]);
   }
-  return { winnaars, totaalDeelnemers: deelnemers.length };
+  return { winners, totalParticipants: participants.length };
 }
 
-async function eindigGiveaway(messageId, kanaalId) {
+async function endGiveaway(messageId, channelId) {
   try {
     const giveaways = await getGiveaways();
     const g = giveaways[messageId];
     if (!g) return;
 
-    const channel = await client.channels.fetch(kanaalId).catch(() => null);
+    const channel = await client.channels.fetch(channelId).catch(() => null);
     if (!channel) {
       delete giveaways[messageId];
       await saveGiveaways(giveaways);
@@ -561,25 +666,25 @@ async function eindigGiveaway(messageId, kanaalId) {
       return;
     }
 
-    const { winnaars } = await kiesWinnaars(msg, g.winners);
+    const { winners } = await pickWinners(msg, g.winners);
 
-    await msg.edit({ embeds: [buildGiveawayEndedEmbed(g, winnaars, false)] }).catch(() => {});
+    await msg.edit({ embeds: [buildGiveawayEndedEmbed(g, winners, false)] }).catch(() => {});
 
-    if (winnaars.length > 0) {
+    if (winners.length > 0) {
       await channel.send({
-        content: `🎉 Gefeliciteerd ${winnaars.map(id => `<@${id}>`).join(', ')}! Jullie hebben **${g.item}** gewonnen!`,
+        content: `🎉 Congratulations ${winners.map(id => `<@${id}>`).join(', ')}! You won **${g.item}**!`,
       }).catch(() => {});
 
-      for (const id of winnaars) {
+      for (const id of winners) {
         try {
           const user = await client.users.fetch(id);
           await user.send({
             embeds: [
               new EmbedBuilder()
-                .setTitle('🎉 Je hebt een giveaway gewonnen!')
+                .setTitle('🎉 You won a giveaway!')
                 .setColor(0x00ff88)
                 .setThumbnail(LOGO)
-                .setDescription(`Gefeliciteerd! Je hebt **${g.item}** gewonnen in de giveaway van **Vexora.cc**!`)
+                .setDescription(`Congratulations! You won **${g.item}** in the **Vexora.cc** giveaway!`)
                 .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
                 .setTimestamp(),
             ],
@@ -587,40 +692,40 @@ async function eindigGiveaway(messageId, kanaalId) {
         } catch (e) {}
       }
     } else {
-      await channel.send({ content: `😢 Niemand heeft meegedaan aan de giveaway voor **${g.item}**.` }).catch(() => {});
+      await channel.send({ content: `😢 No one entered the giveaway for **${g.item}**.` }).catch(() => {});
     }
 
-    const laatste = await getLaatsteGiveaways();
-    laatste[kanaalId] = {
+    const last = await getLastGiveaways();
+    last[channelId] = {
       messageId,
       item: g.item,
       winners: g.winners,
-      kanaalId,
+      kanaalId: channelId,
       geeindigd: Date.now(),
     };
-    await saveLaatsteGiveaways(laatste);
+    await saveLastGiveaways(last);
 
     delete giveaways[messageId];
     await saveGiveaways(giveaways);
   } catch (e) {
-    console.error('Eindig giveaway fout:', e.message);
+    console.error('End giveaway error:', e.message);
   }
 }
 
-async function herstelGiveaways() {
+async function restoreGiveaways() {
   try {
     const giveaways = await getGiveaways();
-    const nu = Date.now();
+    const now = Date.now();
     for (const [messageId, g] of Object.entries(giveaways)) {
-      const over = g.eindTijd - nu;
-      if (over <= 0) {
-        await eindigGiveaway(messageId, g.kanaalId);
+      const left = g.eindTijd - now;
+      if (left <= 0) {
+        await endGiveaway(messageId, g.kanaalId);
       } else {
-        setTimeout(() => eindigGiveaway(messageId, g.kanaalId), over);
-        console.log(`Giveaway hersteld: ${g.item} (eindigt over ${formatGiveawayDuur(over)})`);
+        setTimeout(() => endGiveaway(messageId, g.kanaalId), left);
+        console.log(`Giveaway restored: ${g.item} (ends in ${formatShortDuration(left)})`);
       }
     }
-  } catch (e) { console.error('Kon giveaways niet herstellen:', e.message); }
+  } catch (e) { console.error('Could not restore giveaways:', e.message); }
 }
 
 // ===== Transcript =====
@@ -656,23 +761,23 @@ function renderContent(content, mentions) {
 }
 
 function renderEmbed(e) {
-  const kleur = e.color ? `#${e.color.toString(16).padStart(6, '0')}` : '#5865f2';
-  let velden = '';
+  const color = e.color ? `#${e.color.toString(16).padStart(6, '0')}` : '#5865f2';
+  let fields = '';
   if (e.fields && e.fields.length > 0) {
-    velden = `<div class="embed-fields">${e.fields.map(f =>
+    fields = `<div class="embed-fields">${e.fields.map(f =>
       `<div class="embed-field" style="grid-column: span ${f.inline ? 1 : 2}">
         <div class="embed-field-name">${escapeHtml(f.name)}</div>
         <div class="embed-field-value">${renderContent(f.value)}</div>
       </div>`
     ).join('')}</div>`;
   }
-  return `<div class="embed" style="border-left:4px solid ${kleur}">
+  return `<div class="embed" style="border-left:4px solid ${color}">
     <div class="embed-grid">
       <div class="embed-main">
         ${e.author ? `<div class="embed-author">${e.author.iconURL ? `<img src="${e.author.iconURL}" class="embed-author-icon">` : ''}${escapeHtml(e.author.name)}</div>` : ''}
         ${e.title ? `<div class="embed-title">${escapeHtml(e.title)}</div>` : ''}
         ${e.description ? `<div class="embed-desc">${renderContent(e.description)}</div>` : ''}
-        ${velden}
+        ${fields}
         ${e.footer ? `<div class="embed-footer">${e.footer.iconURL ? `<img src="${e.footer.iconURL}" class="embed-footer-icon">` : ''}${escapeHtml(e.footer.text)}</div>` : ''}
       </div>
       ${e.thumbnail ? `<img src="${e.thumbnail.url}" class="embed-thumb">` : ''}
@@ -690,21 +795,21 @@ function renderAttachments(attachments) {
   }).join('');
 }
 
-async function maakTranscript(channel) {
-  let alleBerichten = [], laatsteId = null, doorzoeken = true;
-  while (doorzoeken) {
-    const opties = { limit: 100 };
-    if (laatsteId) opties.before = laatsteId;
-    const berichten = await channel.messages.fetch(opties);
-    if (berichten.size === 0) break;
-    alleBerichten.push(...berichten.values());
-    laatsteId = berichten.last().id;
-    if (berichten.size < 100) doorzoeken = false;
+async function makeTranscript(channel) {
+  let allMessages = [], lastId = null, searching = true;
+  while (searching) {
+    const options = { limit: 100 };
+    if (lastId) options.before = lastId;
+    const messages = await channel.messages.fetch(options);
+    if (messages.size === 0) break;
+    allMessages.push(...messages.values());
+    lastId = messages.last().id;
+    if (messages.size < 100) searching = false;
   }
-  alleBerichten.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-  const berichtenHtml = alleBerichten.map(m => {
+  allMessages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+  const messagesHtml = allMessages.map(m => {
     const avatar = m.author.displayAvatarURL({ extension: 'png', size: 64 });
-    const tijd = new Date(m.createdTimestamp).toLocaleString('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const time = new Date(m.createdTimestamp).toLocaleString('en-US', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const botBadge = m.author.bot ? '<span class="bot-badge">BOT</span>' : '';
     return `<div class="message">
       <img class="avatar" src="${avatar}" alt="avatar">
@@ -712,7 +817,7 @@ async function maakTranscript(channel) {
         <div class="message-header">
           <span class="username" style="color:${m.member && m.member.displayHexColor && m.member.displayHexColor !== '#000000' ? m.member.displayHexColor : '#ffffff'}">${escapeHtml(m.author.username)}</span>
           ${botBadge}
-          <span class="timestamp">${tijd}</span>
+          <span class="timestamp">${time}</span>
         </div>
         ${m.content ? `<div class="message-content">${renderContent(m.content, m.mentions)}</div>` : ''}
         ${m.embeds && m.embeds.length > 0 ? m.embeds.map(renderEmbed).join('') : ''}
@@ -721,7 +826,7 @@ async function maakTranscript(channel) {
     </div>`;
   }).join('');
   const html = `<!DOCTYPE html>
-<html lang="nl"><head><meta charset="UTF-8"><title>Transcript - #${escapeHtml(channel.name)}</title><link rel="icon" href="${LOGO}">
+<html lang="en"><head><meta charset="UTF-8"><title>Transcript - #${escapeHtml(channel.name)}</title><link rel="icon" href="${LOGO}">
 <style>
 * { box-sizing: border-box; }
 body { margin: 0; background: #313338; color: #dbdee1; font-family: 'gg sans', 'Whitney', 'Helvetica Neue', Arial, sans-serif; font-size: 16px; line-height: 1.375; }
@@ -761,10 +866,47 @@ body { margin: 0; background: #313338; color: #dbdee1; font-family: 'gg sans', '
 .attachment-image { margin-top: 8px; }
 .attachment-image img { max-width: 400px; max-height: 300px; border-radius: 4px; }
 </style></head><body>
-<div class="header"><h1>Transcript: #${escapeHtml(channel.name)}</h1><div class="meta">${alleBerichten.length} berichten • Gegenereerd op ${new Date().toLocaleString('nl-NL')}</div></div>
-<div class="chat">${berichtenHtml}</div>
+<div class="header"><h1>Transcript: #${escapeHtml(channel.name)}</h1><div class="meta">${allMessages.length} messages • Generated on ${new Date().toLocaleString('en-US')}</div></div>
+<div class="chat">${messagesHtml}</div>
 </body></html>`;
-  return { html, aantalBerichten: alleBerichten.length };
+  return { html, messageCount: allMessages.length };
+}
+
+// ===== Close ticket (reusable) =====
+async function closeTicket(channel, closerId) {
+  const tickets = await getTickets();
+  const ticket = tickets[channel.id];
+  if (!ticket) return { ok: false, reason: 'This is not an active ticket.' };
+
+  try {
+    const { html, messageCount } = await makeTranscript(channel);
+    const buffer = Buffer.from(html, 'utf-8');
+    const attachment = new AttachmentBuilder(buffer, { name: `transcript-${channel.name}.html` });
+    const transcriptChannel = await client.channels.fetch(TICKET_TRANSCRIPT_CHANNEL_ID);
+    const cat = TICKET_CATEGORIES[ticket.categorie];
+
+    const transcriptEmbed = new EmbedBuilder()
+      .setTitle('Ticket Transcript').setColor(cat ? cat.color : 0x5865f2).setThumbnail(LOGO)
+      .addFields(
+        { name: 'Channel', value: `#${channel.name}`, inline: true },
+        { name: 'Customer', value: `<@${ticket.userId}>`, inline: true },
+        { name: 'Closed by', value: `<@${closerId}>`, inline: true },
+        { name: 'Category', value: cat ? cat.name : 'Unknown', inline: true },
+        { name: 'Messages', value: `${messageCount}`, inline: true }
+      ).setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
+
+    await transcriptChannel.send({ embeds: [transcriptEmbed], files: [attachment] });
+  } catch (e) {
+    console.error('Could not create transcript:', e.message);
+  }
+
+  await removeTicket(channel.id);
+
+  setTimeout(async () => {
+    try { await channel.delete('Ticket closed'); } catch (e) {}
+  }, 5000);
+
+  return { ok: true };
 }
 
 // ===== Verify =====
@@ -775,16 +917,16 @@ async function setupVerify() {
     await clearBotMessages(channel);
     const embed = new EmbedBuilder()
       .setTitle('Verify').setColor(0x5865f2)
-      .setDescription('Klik hieronder om toegang te krijgen tot de server.')
+      .setDescription('Click below to gain access to the server.')
       .setThumbnail(LOGO).setFooter({ text: 'Vexora.cc', iconURL: LOGO });
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('verify_button').setLabel('Verify').setEmoji('✅').setStyle(ButtonStyle.Success)
     );
     await channel.send({ embeds: [embed], components: [row] });
-  } catch (e) { console.error('Kon verify niet opzetten:', e.message); }
+  } catch (e) { console.error('Could not set up verify:', e.message); }
 }
 
-// ===== Prijslijst =====
+// ===== Pricing =====
 async function setupPricing() {
   try {
     const channel = await client.channels.fetch(PRICING_CHANNEL_ID);
@@ -792,7 +934,7 @@ async function setupPricing() {
     await clearBotMessages(channel);
     const embed = new EmbedBuilder()
       .setTitle('Vexora.cc Private').setColor(0x5865f2).setThumbnail(LOGO)
-      .setDescription('> Premium external cheat met advanced bypass.\n> ⚡ Snelle levering • 🔒 Veilig • 🕐 24/7 Support')
+      .setDescription('> Premium external cheat with advanced bypass.\n> ⚡ Fast delivery • 🔒 Safe • 🕐 24/7 Support')
       .addFields(
         { name: '💰 Pricing', value: '```\n1 Week    →  €7.50\n1 Month   →  €20.00\nLifetime  →  €60.00\n```', inline: false },
         { name: '🛡️ Product', value: '> • External Cheat\n> • Advanced bypass — removes all traces after execution\n> • Daily Updates\n> • Easy to use interface\n> • 24/7 Support', inline: false },
@@ -800,7 +942,7 @@ async function setupPricing() {
       )
       .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
     await channel.send({ embeds: [embed] });
-  } catch (e) { console.error('Kon prijslijst niet plaatsen:', e.message); }
+  } catch (e) { console.error('Could not post pricing:', e.message); }
 }
 
 // ===== Ticket panel =====
@@ -811,10 +953,10 @@ async function setupTicketPanel() {
     await clearBotMessages(channel);
     const embed = new EmbedBuilder()
       .setTitle('Tickets').setColor(0x5865f2)
-      .setDescription('Kies hieronder een categorie om een ticket te openen.\n\n> ⚡ Snelle levering\n> 🔒 Veilig & betrouwbaar\n> 🕐 24/7 Support')
+      .setDescription('Choose a category below to open a ticket.\n\n> ⚡ Fast delivery\n> 🔒 Safe & reliable\n> 🕐 24/7 Support')
       .setThumbnail(LOGO).setFooter({ text: 'Vexora.cc', iconURL: LOGO });
     const menu = new StringSelectMenuBuilder()
-      .setCustomId('ticket_category_select').setPlaceholder('Categorie...')
+      .setCustomId('ticket_category_select').setPlaceholder('Category...')
       .addOptions([
         { label: 'Support', value: 'support', emoji: '🎫' },
         { label: 'Purchase', value: 'purchase', emoji: '🛒' },
@@ -822,7 +964,7 @@ async function setupTicketPanel() {
       ]);
     const row = new ActionRowBuilder().addComponents(menu);
     await channel.send({ embeds: [embed], components: [row] });
-  } catch (e) { console.error('Kon ticket panel niet plaatsen:', e.message); }
+  } catch (e) { console.error('Could not post ticket panel:', e.message); }
 }
 
 // ===== Legit poll =====
@@ -844,17 +986,17 @@ async function setupLegitPoll() {
       } catch (e) {}
     }
     await clearBotMessages(channel);
-    const nieuw = await channel.send({ embeds: [embed], components: [row] });
-    await setLegitMessageId(nieuw.id);
-  } catch (e) { console.error('Kon legit poll niet plaatsen:', e.message); }
+    const newMsg = await channel.send({ embeds: [embed], components: [row] });
+    await setLegitMessageId(newMsg.id);
+  } catch (e) { console.error('Could not post legit poll:', e.message); }
 }
 
 // ===== Ticket storage =====
-async function getTickets() { const d = await leesGist(); return d.tickets; }
-async function saveTickets(t) { const d = await leesGist(); d.tickets = t; await schrijfGist(d); }
-async function addTicket(channelId, userId, categorieKey) {
+async function getTickets() { const d = await readGist(); return d.tickets; }
+async function saveTickets(t) { const d = await readGist(); d.tickets = t; await writeGist(d); }
+async function addTicket(channelId, userId, categoryKey) {
   const t = await getTickets();
-  t[channelId] = { userId, categorie: categorieKey, gestart: Date.now() };
+  t[channelId] = { userId, categorie: categoryKey, gestart: Date.now(), extraUsers: [] };
   await saveTickets(t);
 }
 async function removeTicket(channelId) {
@@ -864,16 +1006,16 @@ async function removeTicket(channelId) {
 }
 
 // ===== Helpers =====
-function sterren(n) { return '⭐'.repeat(n) + '☆'.repeat(5 - n); }
+function stars(n) { return '⭐'.repeat(n) + '☆'.repeat(5 - n); }
 
-function sterRow(gekozen) {
+function starRow(chosen) {
   const row = new ActionRowBuilder();
   for (let i = 1; i <= 5; i++) {
     row.addComponents(
       new ButtonBuilder()
         .setCustomId(`star_${i}`).setLabel(`${i} ⭐`)
-        .setStyle(gekozen === i ? ButtonStyle.Success : ButtonStyle.Secondary)
-        .setDisabled(gekozen !== null && gekozen !== i)
+        .setStyle(chosen === i ? ButtonStyle.Success : ButtonStyle.Secondary)
+        .setDisabled(chosen !== null && chosen !== i)
     );
   }
   return row;
@@ -881,7 +1023,7 @@ function sterRow(gekozen) {
 
 function submitRow() {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('submit').setLabel('Verstuur').setStyle(ButtonStyle.Primary)
+    new ButtonBuilder().setCustomId('submit').setLabel('Submit').setStyle(ButtonStyle.Primary)
   );
 }
 
@@ -889,121 +1031,121 @@ function submitRow() {
 client.on('interactionCreate', async (i) => {
   // /review
   if (i.isChatInputCommand() && i.commandName === 'review') {
-    if (i.channelId !== REVIEW_CHANNEL_ID) return i.reply({ content: `Je kunt alleen in <#${REVIEW_CHANNEL_ID}> een review plaatsen.`, ephemeral: true });
-    if (!i.member.roles.cache.has(REQUIRED_ROLE_ID)) return i.reply({ content: `Je hebt de <@&${REQUIRED_ROLE_ID}> rol nodig om een review te plaatsen.`, ephemeral: true });
+    if (i.channelId !== REVIEW_CHANNEL_ID) return i.reply({ content: `You can only post a review in <#${REVIEW_CHANNEL_ID}>.`, ephemeral: true });
+    if (!i.member.roles.cache.has(REQUIRED_ROLE_ID)) return i.reply({ content: `You need the <@&${REQUIRED_ROLE_ID}> role to post a review.`, ephemeral: true });
     const extra = i.options.getString('extra');
     reviews.set(i.user.id, { product: PRODUCT, extra, rating: null });
-    const embed = new EmbedBuilder().setTitle('Review aanmaken').setDescription(`**Product:** ${PRODUCT}\n\nKies een aantal sterren.`).setColor(0x5865f2).setThumbnail(LOGO);
-    return i.reply({ embeds: [embed], components: [sterRow(null), submitRow()], ephemeral: true });
+    const embed = new EmbedBuilder().setTitle('Create Review').setDescription(`**Product:** ${PRODUCT}\n\nChoose a star rating.`).setColor(0x5865f2).setThumbnail(LOGO);
+    return i.reply({ embeds: [embed], components: [starRow(null), submitRow()], ephemeral: true });
   }
 
   // /purchase
   if (i.isChatInputCommand() && i.commandName === 'purchase') {
-    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) return i.reply({ content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig.`, ephemeral: true });
+    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) return i.reply({ content: `You need the <@&${PURCHASE_ROLE_ID}> role.`, ephemeral: true });
     await i.deferReply();
-    const doelUser = i.options.getUser('user');
+    const targetUser = i.options.getUser('user');
     const plan = i.options.getString('plan');
     const key = i.options.getString('key');
-    const duur = planDuurMs(plan);
-    if (duur === undefined) return i.editReply({ content: 'Onbekend plan.' });
+    const duration = planDurationMs(plan);
+    if (duration === undefined) return i.editReply({ content: 'Unknown plan.' });
     try {
       const guild = await client.guilds.fetch(GUILD_ID);
-      const member = await guild.members.fetch(doelUser.id);
+      const member = await guild.members.fetch(targetUser.id);
       await member.roles.add(REQUIRED_ROLE_ID, `Purchase: ${plan}`);
-      const { eindTijd } = await addPurchase(doelUser.id, plan, key);
-      await updateOverzicht();
-      const planTekst = plan === 'lifetime' ? 'Lifetime' : plan;
+      const { endTime } = await addPurchase(targetUser.id, plan, key);
+      await updateOverview();
+      const planText = plan === 'lifetime' ? 'Lifetime' : plan;
       const embed = new EmbedBuilder()
-        .setTitle('Purchase Voltooid').setColor(0x00ff88).setThumbnail(LOGO)
-        .setDescription(`Bedankt voor je aankoop, <@${doelUser.id}>!\n\nJe plan is actief en je key staat hieronder.`)
+        .setTitle('Purchase Completed').setColor(0x00ff88).setThumbnail(LOGO)
+        .setDescription(`Thanks for your purchase, <@${targetUser.id}>!\n\nYour plan is active and your key is shown below.`)
         .addFields(
-          { name: 'Klant', value: `<@${doelUser.id}>`, inline: true },
-          { name: 'Plan', value: planTekst, inline: true },
-          { name: 'Duur', value: formatDuur(duur), inline: true },
+          { name: 'Customer', value: `<@${targetUser.id}>`, inline: true },
+          { name: 'Plan', value: planText, inline: true },
+          { name: 'Duration', value: formatDuration(duration), inline: true },
           { name: 'Key', value: `\`\`\`${key}\`\`\``, inline: false },
-          { name: 'Verloopt', value: eindTijd === null ? 'Nooit (Lifetime)' : `<t:${Math.floor(eindTijd/1000)}:F> (<t:${Math.floor(eindTijd/1000)}:R>)`, inline: false }
+          { name: 'Expires', value: endTime === null ? 'Never (Lifetime)' : `<t:${Math.floor(endTime/1000)}:F> (<t:${Math.floor(endTime/1000)}:R>)`, inline: false }
         )
         .setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
       await i.editReply({ embeds: [embed] });
       try {
         const dmEmbed = new EmbedBuilder()
-          .setTitle('Bedankt voor je aankoop!').setColor(0x00ff88).setThumbnail(LOGO)
-          .setDescription(`Hey <@${doelUser.id}>,\n\nBedankt voor je aankoop van **${planTekst} Plan** voor **${PRODUCT}**!\n\nHier is je key:\n\`\`\`${key}\`\`\`\nBewaar deze goed!\n\nWil je een review achterlaten? Gebruik \`/review\`. 💙`)
+          .setTitle('Thank you for your purchase!').setColor(0x00ff88).setThumbnail(LOGO)
+          .setDescription(`Hey <@${targetUser.id}>,\n\nThanks for purchasing the **${planText} Plan** for **${PRODUCT}**!\n\nHere is your key:\n\`\`\`${key}\`\`\`\nKeep it safe!\n\nWant to leave a review? Use \`/review\`. 💙`)
           .setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
-        await doelUser.send({ embeds: [dmEmbed] });
+        await targetUser.send({ embeds: [dmEmbed] });
       } catch (e) {}
-    } catch (e) { await i.editReply({ content: `Fout: ${e.message}` }); }
+    } catch (e) { await i.editReply({ content: `Error: ${e.message}` }); }
     return;
   }
 
   // /removelicense
   if (i.isChatInputCommand() && i.commandName === 'removelicense') {
-    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) return i.reply({ content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig.`, ephemeral: true });
+    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) return i.reply({ content: `You need the <@&${PURCHASE_ROLE_ID}> role.`, ephemeral: true });
     await i.deferReply();
-    const doelUser = i.options.getUser('user');
+    const targetUser = i.options.getUser('user');
     try {
       const guild = await client.guilds.fetch(GUILD_ID);
-      const member = await guild.members.fetch(doelUser.id);
-      const bestaande = await removePurchase(doelUser.id);
-      if (!bestaande) return i.editReply({ content: `⚠️ <@${doelUser.id}> heeft geen actieve licentie.` });
-      let rolVerwijderd = false;
+      const member = await guild.members.fetch(targetUser.id);
+      const existing = await removePurchase(targetUser.id);
+      if (!existing) return i.editReply({ content: `⚠️ <@${targetUser.id}> has no active license.` });
+      let roleRemoved = false;
       if (member.roles.cache.has(REQUIRED_ROLE_ID)) {
-        await member.roles.remove(REQUIRED_ROLE_ID, 'Licentie verwijderd');
-        rolVerwijderd = true;
+        await member.roles.remove(REQUIRED_ROLE_ID, 'License removed');
+        roleRemoved = true;
       }
-      await updateOverzicht();
-      const embed = new EmbedBuilder().setTitle('Licentie Verwijderd').setColor(0xff4444).setThumbnail(LOGO)
+      await updateOverview();
+      const embed = new EmbedBuilder().setTitle('License Removed').setColor(0xff4444).setThumbnail(LOGO)
         .addFields(
-          { name: 'Klant', value: `<@${doelUser.id}>`, inline: true },
-          { name: 'Plan', value: bestaande.plan === 'lifetime' ? 'Lifetime' : bestaande.plan, inline: true },
-          { name: 'Key', value: bestaande.key ? `\`${bestaande.key}\`` : 'geen', inline: false },
-          { name: 'Rol verwijderd', value: rolVerwijderd ? 'Ja' : 'Nee', inline: true }
+          { name: 'Customer', value: `<@${targetUser.id}>`, inline: true },
+          { name: 'Plan', value: existing.plan === 'lifetime' ? 'Lifetime' : existing.plan, inline: true },
+          { name: 'Key', value: existing.key ? `\`${existing.key}\`` : 'none', inline: false },
+          { name: 'Role removed', value: roleRemoved ? 'Yes' : 'No', inline: true }
         ).setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
       await i.editReply({ embeds: [embed] });
-    } catch (e) { await i.editReply({ content: `Fout: ${e.message}` }); }
+    } catch (e) { await i.editReply({ content: `Error: ${e.message}` }); }
     return;
   }
 
   // /suggestie
   if (i.isChatInputCommand() && i.commandName === 'suggestie') {
     await i.deferReply({ ephemeral: true });
-    const tekst = i.options.getString('tekst');
+    const text = i.options.getString('tekst');
     try {
-      const kanaal = await client.channels.fetch(SUGGESTIE_CHANNEL_ID);
-      const placeholder = new EmbedBuilder().setTitle('Nieuwe Suggestie').setColor(0x5865f2).setThumbnail(LOGO).setDescription('Laden...').setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
-      const bericht = await kanaal.send({ embeds: [placeholder] });
+      const channel = await client.channels.fetch(SUGGESTIE_CHANNEL_ID);
+      const placeholder = new EmbedBuilder().setTitle('New Suggestion').setColor(0x5865f2).setThumbnail(LOGO).setDescription('Loading...').setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
+      const msg = await channel.send({ embeds: [placeholder] });
       const suggestions = await getSuggestions();
-      suggestions[bericht.id] = { tekst, auteurId: i.user.id, approve: [], reject: [], gestart: Date.now() };
+      suggestions[msg.id] = { tekst: text, auteurId: i.user.id, approve: [], reject: [], gestart: Date.now() };
       await saveSuggestions(suggestions);
-      const s = suggestions[bericht.id];
-      await bericht.edit({ embeds: [buildSuggestieEmbed(s)], components: [buildSuggestieRow(bericht.id, s)] });
-      await i.editReply({ content: `Je suggestie is geplaatst in <#${SUGGESTIE_CHANNEL_ID}>.` });
-    } catch (e) { await i.editReply({ content: `Fout: ${e.message}` }); }
+      const s = suggestions[msg.id];
+      await msg.edit({ embeds: [buildSuggestionEmbed(s)], components: [buildSuggestionRow(msg.id, s)] });
+      await i.editReply({ content: `Your suggestion has been posted in <#${SUGGESTIE_CHANNEL_ID}>.` });
+    } catch (e) { await i.editReply({ content: `Error: ${e.message}` }); }
     return;
   }
 
   // /refresh
   if (i.isChatInputCommand() && i.commandName === 'refresh') {
-    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) return i.reply({ content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig.`, ephemeral: true });
+    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) return i.reply({ content: `You need the <@&${PURCHASE_ROLE_ID}> role.`, ephemeral: true });
     await i.deferReply({ ephemeral: true });
     try {
-      await herstartOverzicht();
-      await i.editReply({ content: `Overzicht vernieuwd in <#${PURCHASE_LOG_CHANNEL_ID}>.` });
-    } catch (e) { await i.editReply({ content: `Fout: ${e.message}` }); }
+      await restartOverview();
+      await i.editReply({ content: `Overview refreshed in <#${PURCHASE_LOG_CHANNEL_ID}>.` });
+    } catch (e) { await i.editReply({ content: `Error: ${e.message}` }); }
     return;
   }
 
   // /removekruis
   if (i.isChatInputCommand() && i.commandName === 'removekruis') {
-    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) return i.reply({ content: `Je hebt de <@&${PURCHASE_ROLE_ID}> rol nodig.`, ephemeral: true });
+    if (!i.member.roles.cache.has(PURCHASE_ROLE_ID)) return i.reply({ content: `You need the <@&${PURCHASE_ROLE_ID}> role.`, ephemeral: true });
     await i.deferReply();
-    const aantal = i.options.getInteger('aantal');
+    const amount = i.options.getInteger('aantal');
     try {
       const votes = await getLegitVotes();
-      const huidig = votes.reject.length;
-      if (huidig === 0) return i.editReply({ content: '⚠️ Er zijn momenteel geen kruisjes om te verwijderen.' });
-      const teVerwijderen = Math.min(aantal, huidig);
-      votes.reject.splice(huidig - teVerwijderen, teVerwijderen);
+      const current = votes.reject.length;
+      if (current === 0) return i.editReply({ content: '⚠️ There are currently no crosses to remove.' });
+      const toRemove = Math.min(amount, current);
+      votes.reject.splice(current - toRemove, toRemove);
       await saveLegitVotes(votes);
       try {
         const channel = await client.channels.fetch(LEGIT_CHANNEL_ID);
@@ -1019,28 +1161,28 @@ client.on('interactionCreate', async (i) => {
         const logChannel = await client.channels.fetch(VOTE_LOG_CHANNEL_ID);
         if (logChannel) {
           const embed = new EmbedBuilder().setColor(0xff4444)
-            .setDescription(`🧹 <@${i.user.id}> heeft **${teVerwijderen}** kruisje(s) ❌ verwijderd uit de legit poll.`)
+            .setDescription(`🧹 <@${i.user.id}> removed **${toRemove}** ❌ vote(s) from the legit poll.`)
             .setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
           await logChannel.send({ embeds: [embed] });
         }
       } catch (e) {}
-      const embed = new EmbedBuilder().setTitle('Kruisjes Verwijderd').setColor(0xff4444).setThumbnail(LOGO)
+      const embed = new EmbedBuilder().setTitle('Crosses Removed').setColor(0xff4444).setThumbnail(LOGO)
         .addFields(
-          { name: 'Verwijderd', value: `${teVerwijderen}`, inline: true },
-          { name: 'Resterend ❌', value: `${votes.reject.length}`, inline: true },
-          { name: 'Totaal ✅', value: `${votes.approve.length}`, inline: true }
+          { name: 'Removed', value: `${toRemove}`, inline: true },
+          { name: 'Remaining ❌', value: `${votes.reject.length}`, inline: true },
+          { name: 'Total ✅', value: `${votes.approve.length}`, inline: true }
         ).setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
-      if (teVerwijderen < aantal) embed.setDescription(`⚠️ Je vroeg om **${aantal}**, maar er waren er maar **${huidig}**.`);
+      if (toRemove < amount) embed.setDescription(`⚠️ You asked to remove **${amount}**, but there were only **${current}**.`);
       await i.editReply({ embeds: [embed] });
-    } catch (e) { await i.editReply({ content: `Fout: ${e.message}` }); }
+    } catch (e) { await i.editReply({ content: `Error: ${e.message}` }); }
     return;
   }
 
-  // /giveaway — ALLEEN VOOR TICKET SUPPORT ROL
+  // /giveaway
   if (i.isChatInputCommand() && i.commandName === 'giveaway') {
     if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
       return i.reply({
-        content: `Je hebt de <@&${TICKET_SUPPORT_ROLE_ID}> rol nodig om een giveaway te starten.`,
+        content: `You need the <@&${TICKET_SUPPORT_ROLE_ID}> role to start a giveaway.`,
         ephemeral: true,
       });
     }
@@ -1050,23 +1192,23 @@ client.on('interactionCreate', async (i) => {
     const winners = i.options.getInteger('winners');
     const item = i.options.getString('item');
     const timeStr = i.options.getString('time');
-    const duurMs = parseGiveawayTime(timeStr);
+    const durationMs = parseDuration(timeStr);
 
-    if (!duurMs || duurMs < 10 * 1000) {
-      return i.editReply({ content: '⚠️ Ongeldige tijd. Gebruik formaat zoals `30s`, `5m`, `1h`, `1d`, `1w` (minimaal 10s).' });
+    if (!durationMs || durationMs < 10 * 1000) {
+      return i.editReply({ content: '⚠️ Invalid time. Use format like `30s`, `5m`, `1h`, `1d`, `1w` (minimum 10s).' });
     }
-    if (duurMs > 30 * 24 * 60 * 60 * 1000) {
-      return i.editReply({ content: '⚠️ Maximale duur is 30 dagen.' });
+    if (durationMs > 30 * 24 * 60 * 60 * 1000) {
+      return i.editReply({ content: '⚠️ Maximum duration is 30 days.' });
     }
 
     try {
-      const eindTijd = Date.now() + duurMs;
+      const endTime = Date.now() + durationMs;
       const giveaways = await getGiveaways();
 
       const giveawayData = {
         item,
         winners,
-        eindTijd,
+        eindTijd: endTime,
         gestart: Date.now(),
         kanaalId: i.channelId,
         hostId: i.user.id,
@@ -1081,89 +1223,89 @@ client.on('interactionCreate', async (i) => {
       giveaways[msg.id] = giveawayData;
       await saveGiveaways(giveaways);
 
-      setTimeout(() => eindigGiveaway(msg.id, i.channelId), duurMs);
+      setTimeout(() => endGiveaway(msg.id, i.channelId), durationMs);
 
-      const bevestiging = new EmbedBuilder()
-        .setTitle('Giveaway Gestart')
+      const confirmation = new EmbedBuilder()
+        .setTitle('Giveaway Started')
         .setColor(0x00ff88)
         .setThumbnail(LOGO)
         .addFields(
-          { name: 'Prijs', value: item, inline: true },
-          { name: 'Winnaars', value: `${winners}`, inline: true },
-          { name: 'Duur', value: formatGiveawayDuur(duurMs), inline: true },
-          { name: 'Eindigt', value: `<t:${Math.floor(eindTijd / 1000)}:F> (<t:${Math.floor(eindTijd / 1000)}:R>)`, inline: false }
+          { name: 'Prize', value: item, inline: true },
+          { name: 'Winners', value: `${winners}`, inline: true },
+          { name: 'Duration', value: formatShortDuration(durationMs), inline: true },
+          { name: 'Ends', value: `<t:${Math.floor(endTime / 1000)}:F> (<t:${Math.floor(endTime / 1000)}:R>)`, inline: false }
         )
         .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
         .setTimestamp();
 
-      await i.editReply({ embeds: [bevestiging] });
+      await i.editReply({ embeds: [confirmation] });
     } catch (e) {
-      console.error('Giveaway fout:', e);
-      await i.editReply({ content: `Fout: ${e.message}` });
+      console.error('Giveaway error:', e);
+      await i.editReply({ content: `Error: ${e.message}` });
     }
     return;
   }
 
-  // /reroll — ALLEEN VOOR TICKET SUPPORT ROL
+  // /reroll
   if (i.isChatInputCommand() && i.commandName === 'reroll') {
     if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
       return i.reply({
-        content: `Je hebt de <@&${TICKET_SUPPORT_ROLE_ID}> rol nodig om te rerollen.`,
+        content: `You need the <@&${TICKET_SUPPORT_ROLE_ID}> role to reroll.`,
         ephemeral: true,
       });
     }
 
     await i.deferReply();
 
-    const aantal = i.options.getInteger('winners');
+    const amount = i.options.getInteger('winners');
 
     try {
-      const laatste = await getLaatsteGiveaways();
-      const info = laatste[i.channelId];
+      const last = await getLastGiveaways();
+      const info = last[i.channelId];
 
       if (!info) {
         return i.editReply({
-          content: '⚠️ Er is geen afgelopen giveaway gevonden in dit kanaal om te rerollen.',
+          content: '⚠️ No ended giveaway found in this channel to reroll.',
         });
       }
 
       const channel = await client.channels.fetch(i.channelId);
-      if (!channel) return i.editReply({ content: 'Kanaal niet gevonden.' });
+      if (!channel) return i.editReply({ content: 'Channel not found.' });
 
       const msg = await channel.messages.fetch(info.messageId).catch(() => null);
       if (!msg) {
         return i.editReply({
-          content: '⚠️ Het originele giveaway-bericht bestaat niet meer, kan niet rerollen.',
+          content: '⚠️ The original giveaway message no longer exists, cannot reroll.',
         });
       }
 
-      const { winnaars, totaalDeelnemers } = await kiesWinnaars(msg, aantal);
+      const { winners, totalParticipants } = await pickWinners(msg, amount);
 
-      if (totaalDeelnemers === 0) {
+      if (totalParticipants === 0) {
         return i.editReply({
-          content: '⚠️ Er zijn geen deelnemers om uit te kiezen.',
+          content: '⚠️ There are no participants to pick from.',
         });
       }
 
-      const g = { item: info.item, winners: aantal };
+      const g = { item: info.item, winners: amount };
 
-      await msg.edit({ embeds: [buildGiveawayEndedEmbed(g, winnaars, true)] }).catch(() => {});
+      await msg.edit({ embeds: [buildGiveawayEndedEmbed(g, winners, true)] }).catch(() => {});
 
-      if (winnaars.length > 0) {
+      if (winners.length > 0) {
         await channel.send({
-          content: `🎉 **Reroll!** Gefeliciteerd ${winnaars.map(id => `<@${id}>`).join(', ')}! Jullie hebben **${info.item}** gewonnen!`,
+          content: `🎉 **Reroll!** Congratulations ${winners.map(id => `<@${id}>`).join(', ')}! You won **${info.item}**!`,
         }).catch(() => {});
 
-        for (const id of winnaars) {
+        for (const id of winners) {
           try {
             const user = await client.users.fetch(id);
             await user.send({
               embeds: [
                 new EmbedBuilder()
-                  .setTitle('🎉 Je hebt een giveaway gewonnen!')
+                  .setTitle('🎉 You won a giveaway!')
                   .setColor(0x00ff88)
                   .setThumbnail(LOGO)
-                  .setDescription(`Gefeliciteerd! Je hebt **${info.item}** gewonnen in de reroll van **Vexora.cc**!`)
+                  .setDescription(`Congratulations! You won **${info.item}** in the **Vexora.cc** reroll!`)
                   .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
                   .setTimestamp(),
               ],
@@ -1172,91 +1314,401 @@ client.on('interactionCreate', async (i) => {
         }
       }
 
-      const bevestiging = new EmbedBuilder()
-        .setTitle('Reroll Voltooid')
+      const confirmation = new EmbedBuilder()
+        .setTitle('Reroll Complete')
         .setColor(0x00ff88)
         .setThumbnail(LOGO)
         .addFields(
-          { name: 'Prijs', value: info.item, inline: true },
-          { name: 'Nieuwe winnaars', value: `${winnaars.length}`, inline: true },
-          { name: 'Totaal deelnemers', value: `${totaalDeelnemers}`, inline: true }
+          { name: 'Prize', value: info.item, inline: true },
+          { name: 'New winners', value: `${winners.length}`, inline: true },
+          { name: 'Total participants', value: `${totalParticipants}`, inline: true }
         )
         .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
         .setTimestamp();
 
-      await i.editReply({ embeds: [bevestiging] });
+      await i.editReply({ embeds: [confirmation] });
     } catch (e) {
-      console.error('Reroll fout:', e);
-      await i.editReply({ content: `Fout: ${e.message}` });
+      console.error('Reroll error:', e);
+      await i.editReply({ content: `Error: ${e.message}` });
     }
     return;
   }
 
-  // /clear — ALLEEN VOOR TICKET SUPPORT ROL
+  // /clear
   if (i.isChatInputCommand() && i.commandName === 'clear') {
     if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
       return i.reply({
-        content: `Je hebt de <@&${TICKET_SUPPORT_ROLE_ID}> rol nodig om berichten te verwijderen.`,
+        content: `You need the <@&${TICKET_SUPPORT_ROLE_ID}> role to delete messages.`,
         ephemeral: true,
       });
     }
 
     await i.deferReply({ ephemeral: true });
 
-    const aantal = i.options.getInteger('aantal');
+    const amount = i.options.getInteger('amount');
 
     try {
-      const deleted = await i.channel.bulkDelete(aantal, true);
+      const deleted = await i.channel.bulkDelete(amount, true);
 
       const embed = new EmbedBuilder()
-        .setTitle('Berichten Verwijderd')
+        .setTitle('Messages Deleted')
         .setColor(0xff4444)
         .setThumbnail(LOGO)
         .addFields(
-          { name: 'Verwijderd', value: `${deleted.size}`, inline: true },
-          { name: 'Kanaal', value: `<#${i.channelId}>`, inline: true },
-          { name: 'Door', value: `<@${i.user.id}>`, inline: true }
+          { name: 'Deleted', value: `${deleted.size}`, inline: true },
+          { name: 'Channel', value: `<#${i.channelId}>`, inline: true },
+          { name: 'By', value: `<@${i.user.id}>`, inline: true }
         )
         .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
         .setTimestamp();
 
       await i.editReply({ embeds: [embed] });
 
-      // Optioneel: log in VOTE_LOG_CHANNEL
       try {
         const logChannel = await client.channels.fetch(VOTE_LOG_CHANNEL_ID);
         if (logChannel) {
           const logEmbed = new EmbedBuilder()
             .setColor(0xff4444)
-            .setDescription(`🧹 <@${i.user.id}> heeft **${deleted.size}** bericht(en) verwijderd in <#${i.channelId}>.`)
+            .setDescription(`🧹 <@${i.user.id}> deleted **${deleted.size}** message(s) in <#${i.channelId}>.`)
             .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
             .setTimestamp();
           await logChannel.send({ embeds: [logEmbed] });
         }
       } catch (e) {}
     } catch (e) {
-      console.error('Clear fout:', e);
+      console.error('Clear error:', e);
       await i.editReply({
-        content: `Fout: ${e.message}\n\nLet op: berichten ouder dan 14 dagen kunnen niet in bulk verwijderd worden.`,
+        content: `Error: ${e.message}\n\nNote: messages older than 14 days cannot be bulk deleted.`,
       });
     }
     return;
   }
 
-  // Ticket categorie select
+  // /ban
+  if (i.isChatInputCommand() && i.commandName === 'ban') {
+    if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
+      return i.reply({
+        content: `You need the <@&${TICKET_SUPPORT_ROLE_ID}> role to ban users.`,
+        ephemeral: true,
+      });
+    }
+
+    await i.deferReply();
+
+    const targetUser = i.options.getUser('user');
+    const durationStr = i.options.getString('duration');
+    const reason = i.options.getString('reason') || 'No reason provided';
+
+    let durationMs = null;
+    if (durationStr) {
+      durationMs = parseDuration(durationStr);
+      if (!durationMs) {
+        return i.editReply({ content: '⚠️ Invalid duration. Use format like `1h`, `1d`, `1w`, `30m`.' });
+      }
+      if (durationMs < 60 * 1000) {
+        return i.editReply({ content: '⚠️ Minimum duration is 1 minute.' });
+      }
+      if (durationMs > 365 * 24 * 60 * 60 * 1000) {
+        return i.editReply({ content: '⚠️ Maximum duration is 1 year.' });
+      }
+    }
+
+    try {
+      const guild = await client.guilds.fetch(GUILD_ID);
+
+      const existingBan = await guild.bans.fetch(targetUser.id).catch(() => null);
+      if (existingBan) {
+        return i.editReply({ content: `⚠️ <@${targetUser.id}> is already banned.` });
+      }
+
+      try {
+        const dmEmbed = new EmbedBuilder()
+          .setTitle('You have been banned')
+          .setColor(0xff4444)
+          .setThumbnail(LOGO)
+          .addFields(
+            { name: 'Server', value: 'Vexora.cc', inline: true },
+            { name: 'Duration', value: durationMs ? formatShortDuration(durationMs) : 'Permanent', inline: true },
+            { name: 'Reason', value: reason, inline: false }
+          )
+          .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+          .setTimestamp();
+        await targetUser.send({ embeds: [dmEmbed] });
+      } catch (e) {}
+
+      await guild.bans.create(targetUser.id, { reason: `${reason} | by ${i.user.tag}` });
+
+      if (durationMs) {
+        await addTemporaryBan(targetUser.id, GUILD_ID, Date.now() + durationMs);
+      }
+
+      try {
+        const logChannel = await client.channels.fetch(BAN_LOG_CHANNEL_ID);
+        if (logChannel) {
+          const logEmbed = new EmbedBuilder()
+            .setColor(0xff4444)
+            .setTitle('🔨 Ban')
+            .setThumbnail(targetUser.displayAvatarURL())
+            .addFields(
+              { name: 'User', value: `${targetUser.tag} (<@${targetUser.id}>)`, inline: false },
+              { name: 'Moderator', value: `<@${i.user.id}>`, inline: true },
+              { name: 'Duration', value: durationMs ? formatShortDuration(durationMs) : 'Permanent', inline: true },
+              { name: 'Reason', value: reason, inline: false }
+            )
+            .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+            .setTimestamp();
+          await logChannel.send({ embeds: [logEmbed] });
+        }
+      } catch (e) {}
+
+      const embed = new EmbedBuilder()
+        .setTitle('User Banned')
+        .setColor(0xff4444)
+        .setThumbnail(LOGO)
+        .addFields(
+          { name: 'User', value: `<@${targetUser.id}>`, inline: true },
+          { name: 'Duration', value: durationMs ? formatShortDuration(durationMs) : 'Permanent', inline: true },
+          { name: 'Reason', value: reason, inline: false }
+        )
+        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+        .setTimestamp();
+
+      if (durationMs) {
+        embed.addFields({
+          name: 'Expires',
+          value: `<t:${Math.floor((Date.now() + durationMs) / 1000)}:F> (<t:${Math.floor((Date.now() + durationMs) / 1000)}:R>)`,
+          inline: false,
+        });
+      }
+
+      await i.editReply({ embeds: [embed] });
+    } catch (e) {
+      console.error('Ban error:', e);
+      await i.editReply({ content: `Error: ${e.message}` });
+    }
+    return;
+  }
+
+  // /unban
+  if (i.isChatInputCommand() && i.commandName === 'unban') {
+    if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
+      return i.reply({
+        content: `You need the <@&${TICKET_SUPPORT_ROLE_ID}> role to unban users.`,
+        ephemeral: true,
+      });
+    }
+
+    await i.deferReply();
+
+    const userId = i.options.getString('user_id').trim();
+    const reason = i.options.getString('reason') || 'No reason provided';
+
+    if (!/^\d{17,20}$/.test(userId)) {
+      return i.editReply({ content: '⚠️ Invalid Discord ID. It must be 17-20 digits.' });
+    }
+
+    try {
+      const guild = await client.guilds.fetch(GUILD_ID);
+
+      const existingBan = await guild.bans.fetch(userId).catch(() => null);
+      if (!existingBan) {
+        return i.editReply({ content: `⚠️ User \`${userId}\` is not banned.` });
+      }
+
+      await guild.bans.remove(userId, `${reason} | by ${i.user.tag}`);
+      await removeBanRecord(userId, GUILD_ID);
+
+      try {
+        const logChannel = await client.channels.fetch(BAN_LOG_CHANNEL_ID);
+        if (logChannel) {
+          const logEmbed = new EmbedBuilder()
+            .setColor(0x00ff88)
+            .setTitle('🔓 Unban')
+            .addFields(
+              { name: 'User', value: `${existingBan.user.tag} (<@${userId}>)`, inline: false },
+              { name: 'Moderator', value: `<@${i.user.id}>`, inline: true },
+              { name: 'Reason', value: reason, inline: false }
+            )
+            .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+            .setTimestamp();
+          await logChannel.send({ embeds: [logEmbed] });
+        }
+      } catch (e) {}
+
+      const embed = new EmbedBuilder()
+        .setTitle('User Unbanned')
+        .setColor(0x00ff88)
+        .setThumbnail(LOGO)
+        .addFields(
+          { name: 'User', value: `${existingBan.user.tag} (<@${userId}>)`, inline: false },
+          { name: 'Reason', value: reason, inline: false }
+        )
+        .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+        .setTimestamp();
+
+      await i.editReply({ embeds: [embed] });
+    } catch (e) {
+      console.error('Unban error:', e);
+      await i.editReply({ content: `Error: ${e.message}` });
+    }
+    return;
+  }
+
+  // /add
+  if (i.isChatInputCommand() && i.commandName === 'add') {
+    if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
+      return i.reply({
+        content: `You need the <@&${TICKET_SUPPORT_ROLE_ID}> role to add users.`,
+        ephemeral: true,
+      });
+    }
+
+    await i.deferReply({ ephemeral: true });
+
+    const tickets = await getTickets();
+    const ticket = tickets[i.channelId];
+    if (!ticket) return i.editReply({ content: 'This is not an active ticket.' });
+
+    const targetUser = i.options.getUser('user');
+
+    try {
+      await i.channel.permissionOverwrites.edit(targetUser.id, {
+        ViewChannel: true,
+        SendMessages: true,
+        ReadMessageHistory: true,
+        AttachFiles: true,
+      });
+
+      if (!ticket.extraUsers) ticket.extraUsers = [];
+      if (!ticket.extraUsers.includes(targetUser.id)) ticket.extraUsers.push(targetUser.id);
+      tickets[i.channelId] = ticket;
+      await saveTickets(tickets);
+
+      await i.channel.send({ content: `➕ <@${targetUser.id}> has been added to this ticket by <@${i.user.id}>.` });
+      await i.editReply({ content: `✅ <@${targetUser.id}> has been added.` });
+    } catch (e) {
+      console.error('Add error:', e);
+      await i.editReply({ content: `Error: ${e.message}` });
+    }
+    return;
+  }
+
+  // /remove
+  if (i.isChatInputCommand() && i.commandName === 'remove') {
+    if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
+      return i.reply({
+        content: `You need the <@&${TICKET_SUPPORT_ROLE_ID}> role to remove users.`,
+        ephemeral: true,
+      });
+    }
+
+    await i.deferReply({ ephemeral: true });
+
+    const tickets = await getTickets();
+    const ticket = tickets[i.channelId];
+    if (!ticket) return i.editReply({ content: 'This is not an active ticket.' });
+
+    const targetUser = i.options.getUser('user');
+
+    if (targetUser.id === ticket.userId) {
+      return i.editReply({ content: '⚠️ You cannot remove the ticket owner. Use `/close` instead.' });
+    }
+
+    try {
+      await i.channel.permissionOverwrites.delete(targetUser.id);
+
+      if (ticket.extraUsers) {
+        ticket.extraUsers = ticket.extraUsers.filter(id => id !== targetUser.id);
+        tickets[i.channelId] = ticket;
+        await saveTickets(tickets);
+      }
+
+      await i.channel.send({ content: `➖ <@${targetUser.id}> has been removed from this ticket by <@${i.user.id}>.` });
+      await i.editReply({ content: `✅ <@${targetUser.id}> has been removed.` });
+    } catch (e) {
+      console.error('Remove error:', e);
+      await i.editReply({ content: `Error: ${e.message}` });
+    }
+    return;
+  }
+
+  // /close
+  if (i.isChatInputCommand() && i.commandName === 'close') {
+    if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
+      return i.reply({
+        content: `You need the <@&${TICKET_SUPPORT_ROLE_ID}> role to close tickets.`,
+        ephemeral: true,
+      });
+    }
+
+    const tickets = await getTickets();
+    if (!tickets[i.channelId]) {
+      return i.reply({ content: 'This is not an active ticket.', ephemeral: true });
+    }
+
+    await i.reply({ content: '🔒 Ticket is being closed and transcript is being saved...' });
+
+    const result = await closeTicket(i.channel, i.user.id);
+    if (!result.ok) {
+      console.error('Could not close ticket:', result.reason);
+    }
+    return;
+  }
+
+  // /rename
+  if (i.isChatInputCommand() && i.commandName === 'rename') {
+    if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
+      return i.reply({
+        content: `You need the <@&${TICKET_SUPPORT_ROLE_ID}> role to rename tickets.`,
+        ephemeral: true,
+      });
+    }
+
+    await i.deferReply({ ephemeral: true });
+
+    const tickets = await getTickets();
+    if (!tickets[i.channelId]) {
+      return i.editReply({ content: 'This is not an active ticket.' });
+    }
+
+    const newName = i.options.getString('name')
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 100);
+
+    if (!newName) {
+      return i.editReply({ content: '⚠️ Invalid name. Use only letters, numbers and dashes.' });
+    }
+
+    try {
+      const oldName = i.channel.name;
+      await i.channel.setName(newName);
+
+      await i.channel.send({ content: `✏️ Ticket renamed from \`${oldName}\` to \`${newName}\` by <@${i.user.id}>.` });
+      await i.editReply({ content: `✅ Ticket renamed to \`${newName}\`.` });
+    } catch (e) {
+      console.error('Rename error:', e);
+      await i.editReply({ content: `Error: ${e.message}` });
+    }
+    return;
+  }
+
+  // Ticket category select
   if (i.isStringSelectMenu() && i.customId === 'ticket_category_select') {
     await i.deferReply({ ephemeral: true });
-    const keuze = i.values[0];
-    const cat = TICKET_CATEGORIES[keuze];
-    if (!cat) return i.editReply({ content: 'Onbekende categorie.' });
+    const choice = i.values[0];
+    const cat = TICKET_CATEGORIES[choice];
+    if (!cat) return i.editReply({ content: 'Unknown category.' });
     try {
       const guild = await client.guilds.fetch(GUILD_ID);
       const tickets = await getTickets();
-      const bestaand = Object.entries(tickets).find(([_, t]) => t.userId === i.user.id);
-      if (bestaand) return i.editReply({ content: `Je hebt al een open ticket: <#${bestaand[0]}>` });
-      const kanaalNaam = `${cat.prefix}-${i.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '');
+      const existing = Object.entries(tickets).find(([_, t]) => t.userId === i.user.id);
+      if (existing) return i.editReply({ content: `You already have an open ticket: <#${existing[0]}>` });
+      const channelName = `${cat.prefix}-${i.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '');
       const ticketChannel = await guild.channels.create({
-        name: kanaalNaam,
+        name: channelName,
         type: ChannelType.GuildText,
         parent: cat.categoryId,
         permissionOverwrites: [
@@ -1265,18 +1717,18 @@ client.on('interactionCreate', async (i) => {
           { id: TICKET_SUPPORT_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages] },
           { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ReadMessageHistory] },
         ],
-        topic: `Ticket van ${i.user.tag} — ${cat.naam}`,
+        topic: `Ticket from ${i.user.tag} — ${cat.name}`,
       });
-      await addTicket(ticketChannel.id, i.user.id, keuze);
-      const embed = new EmbedBuilder().setTitle(cat.naam).setColor(cat.kleur)
-        .setDescription(`<@${i.user.id}> — beschrijf hieronder je vraag.`)
+      await addTicket(ticketChannel.id, i.user.id, choice);
+      const embed = new EmbedBuilder().setTitle(cat.name).setColor(cat.color)
+        .setDescription(`<@${i.user.id}> — describe your question below.`)
         .setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
       const closeRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('ticket_close').setLabel('Sluiten').setEmoji('🔒').setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setEmoji('🔒').setStyle(ButtonStyle.Danger)
       );
       await ticketChannel.send({ content: `<@${i.user.id}> <@&${TICKET_SUPPORT_ROLE_ID}>`, embeds: [embed], components: [closeRow] });
-      await i.editReply({ content: `Ticket aangemaakt: <#${ticketChannel.id}>` });
-    } catch (e) { await i.editReply({ content: `Fout: ${e.message}` }); }
+      await i.editReply({ content: `Ticket created: <#${ticketChannel.id}>` });
+    } catch (e) { await i.editReply({ content: `Error: ${e.message}` }); }
     return;
   }
 
@@ -1284,10 +1736,10 @@ client.on('interactionCreate', async (i) => {
   if (i.isButton()) {
     if (i.customId === 'verify_button') {
       try {
-        if (i.member.roles.cache.has(VERIFY_ROLE_ID)) return i.reply({ content: 'Je bent al geverifieerd.', ephemeral: true });
-        await i.member.roles.add(VERIFY_ROLE_ID, 'Verified via knop');
-        await i.reply({ content: '✅ Je bent geverifieerd! Welkom bij Vexora.cc.', ephemeral: true });
-      } catch (e) { await i.reply({ content: `Fout: ${e.message}`, ephemeral: true }); }
+        if (i.member.roles.cache.has(VERIFY_ROLE_ID)) return i.reply({ content: 'You are already verified.', ephemeral: true });
+        await i.member.roles.add(VERIFY_ROLE_ID, 'Verified via button');
+        await i.reply({ content: '✅ You are verified! Welcome to Vexora.cc.', ephemeral: true });
+      } catch (e) { await i.reply({ content: `Error: ${e.message}`, ephemeral: true }); }
       return;
     }
 
@@ -1303,7 +1755,7 @@ client.on('interactionCreate', async (i) => {
         await saveLegitVotes(votes);
         await i.update({ embeds: [buildLegitEmbed(votes)], components: [buildLegitRow(votes)] });
         await logVote(userId, type, '**Are we legit?**');
-      } catch (e) { await i.reply({ content: `Fout: ${e.message}`, ephemeral: true }); }
+      } catch (e) { await i.reply({ content: `Error: ${e.message}`, ephemeral: true }); }
       return;
     }
 
@@ -1311,41 +1763,23 @@ client.on('interactionCreate', async (i) => {
       try {
         const tickets = await getTickets();
         const ticket = tickets[i.channelId];
-        if (!ticket) return i.reply({ content: 'Dit is geen actief ticket.', ephemeral: true });
+        if (!ticket) return i.reply({ content: 'This is not an active ticket.', ephemeral: true });
         const isOwner = ticket.userId === i.user.id;
         const isStaff = i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID);
-        if (!isOwner && !isStaff) return i.reply({ content: 'Je mag dit ticket niet sluiten.', ephemeral: true });
-        await i.reply({ content: '🔒 Ticket wordt gesloten...' });
-        try {
-          const { html, aantalBerichten } = await maakTranscript(i.channel);
-          const buffer = Buffer.from(html, 'utf-8');
-          const attachment = new AttachmentBuilder(buffer, { name: `transcript-${i.channel.name}.html` });
-          const transcriptChannel = await client.channels.fetch(TICKET_TRANSCRIPT_CHANNEL_ID);
-          const cat = TICKET_CATEGORIES[ticket.categorie];
-          const transcriptEmbed = new EmbedBuilder()
-            .setTitle('Ticket Transcript').setColor(cat ? cat.kleur : 0x5865f2).setThumbnail(LOGO)
-            .addFields(
-              { name: 'Kanaal', value: `#${i.channel.name}`, inline: true },
-              { name: 'Klant', value: `<@${ticket.userId}>`, inline: true },
-              { name: 'Gesloten door', value: `<@${i.user.id}>`, inline: true },
-              { name: 'Categorie', value: cat ? cat.naam : 'Onbekend', inline: true },
-              { name: 'Berichten', value: `${aantalBerichten}`, inline: true }
-            ).setFooter({ text: 'Vexora.cc', iconURL: LOGO }).setTimestamp();
-          await transcriptChannel.send({ embeds: [transcriptEmbed], files: [attachment] });
-        } catch (e) {}
-        await removeTicket(i.channelId);
-        setTimeout(async () => { try { await i.channel.delete('Ticket gesloten'); } catch (e) {} }, 5000);
-      } catch (e) { await i.reply({ content: `Fout: ${e.message}`, ephemeral: true }); }
+        if (!isOwner && !isStaff) return i.reply({ content: 'You cannot close this ticket.', ephemeral: true });
+        await i.reply({ content: '🔒 Ticket is being closed...' });
+        await closeTicket(i.channel, i.user.id);
+      } catch (e) { await i.reply({ content: `Error: ${e.message}`, ephemeral: true }); }
       return;
     }
 
     if (i.customId.startsWith('suggest_approve_') || i.customId.startsWith('suggest_reject_')) {
       const messageId = i.customId.split('_').pop();
-      if (!i.member.roles.cache.has(REQUIRED_ROLE_ID)) return i.reply({ content: `Je hebt de <@&${REQUIRED_ROLE_ID}> rol nodig om te stemmen.`, ephemeral: true });
+      if (!i.member.roles.cache.has(REQUIRED_ROLE_ID)) return i.reply({ content: `You need the <@&${REQUIRED_ROLE_ID}> role to vote.`, ephemeral: true });
       try {
         const suggestions = await getSuggestions();
         const s = suggestions[messageId];
-        if (!s) return i.reply({ content: 'Deze suggestie bestaat niet meer.', ephemeral: true });
+        if (!s) return i.reply({ content: 'This suggestion no longer exists.', ephemeral: true });
         const isApprove = i.customId.startsWith('suggest_approve_');
         const userId = i.user.id;
         s.approve = s.approve.filter(id => id !== userId);
@@ -1353,35 +1787,35 @@ client.on('interactionCreate', async (i) => {
         if (isApprove) s.approve.push(userId);
         else s.reject.push(userId);
         await saveSuggestions(suggestions);
-        await i.update({ embeds: [buildSuggestieEmbed(s)], components: [buildSuggestieRow(messageId, s)] });
-        await logVote(userId, isApprove ? 'approve' : 'reject', `suggestie: **${s.tekst.slice(0, 80)}${s.tekst.length > 80 ? '...' : ''}**`);
-      } catch (e) { await i.reply({ content: `Fout: ${e.message}`, ephemeral: true }); }
+        await i.update({ embeds: [buildSuggestionEmbed(s)], components: [buildSuggestionRow(messageId, s)] });
+        await logVote(userId, isApprove ? 'approve' : 'reject', `suggestion: **${s.tekst.slice(0, 80)}${s.tekst.length > 80 ? '...' : ''}**`);
+      } catch (e) { await i.reply({ content: `Error: ${e.message}`, ephemeral: true }); }
       return;
     }
 
     const review = reviews.get(i.user.id);
-    if (!review) return i.reply({ content: 'Deze review is verlopen. Gebruik /review opnieuw.', ephemeral: true });
+    if (!review) return i.reply({ content: 'This review has expired. Use /review again.', ephemeral: true });
 
     if (i.customId.startsWith('star_')) {
       const n = parseInt(i.customId.split('_')[1]);
       review.rating = n;
-      return i.update({ components: [sterRow(n), submitRow()] });
+      return i.update({ components: [starRow(n), submitRow()] });
     }
 
     if (i.customId === 'submit') {
-      if (!review.rating) return i.reply({ content: 'Kies eerst een aantal sterren.', ephemeral: true });
+      if (!review.rating) return i.reply({ content: 'Choose a star rating first.', ephemeral: true });
       await i.deferUpdate();
-      let nummer;
-      try { nummer = await volgendNummer(i.channel); } catch (e) { nummer = '?'; }
-      if (nummer !== '?') {
-        try { await schrijfCounter(nummer); cachedCounter = nummer; } catch (e) {}
+      let number;
+      try { number = await nextNumber(i.channel); } catch (e) { number = '?'; }
+      if (number !== '?') {
+        try { await writeCounter(number); cachedCounter = number; } catch (e) {}
       }
       const embed = new EmbedBuilder()
-        .setTitle(`Review #${nummer}`).setColor(0xffd700).setTimestamp()
+        .setTitle(`Review #${number}`).setColor(0xffd700).setTimestamp()
         .setAuthor({ name: i.user.displayName, iconURL: i.user.displayAvatarURL() })
         .addFields(
           { name: 'Product', value: review.product },
-          { name: 'Beoordeling', value: `${sterren(review.rating)} (${review.rating}/5)` },
+          { name: 'Rating', value: `${stars(review.rating)} (${review.rating}/5)` },
           { name: 'Extra', value: review.extra }
         ).setThumbnail(LOGO).setFooter({ text: 'Vexora.cc', iconURL: LOGO });
       await i.editReply({ components: [] });
@@ -1400,7 +1834,7 @@ client.on('guildMemberRemove', async (member) => {
     if (!had) return;
     const filtered = purchases.filter(p => p.userId !== member.id);
     await savePurchases(filtered);
-    await updateOverzicht();
+    await updateOverview();
   } catch (e) {}
 });
 
@@ -1417,19 +1851,20 @@ client.on('channelDelete', async (channel) => {
 
 // ===== Ready =====
 client.once('ready', async () => {
-  console.log(`online als ${client.user.tag}`);
+  console.log(`Online as ${client.user.tag}`);
   startStatusInterval();
-  startVervalInterval();
+  startExpiryInterval();
+  startBanInterval();
 
-  await updateOverzicht();
-  startOverzichtInterval();
+  await updateOverview();
+  startOverviewInterval();
 
   await setupVerify();
   await setupPricing();
   await setupTicketPanel();
   await setupLegitPoll();
 
-  await herstelGiveaways();
+  await restoreGiveaways();
 });
 
 client.login(TOKEN);
