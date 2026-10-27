@@ -38,6 +38,7 @@ const TICKET_TRANSCRIPT_CHANNEL_ID = '1554510754852511845';
 const LEGIT_CHANNEL_ID = '1559585421489344513';
 const VOTE_LOG_CHANNEL_ID = '1559588394336653332';
 const BAN_LOG_CHANNEL_ID = '1560402931667435601';
+const NOT_LEGIT_TICKET_CATEGORY_ID = '1564617622908051486';
 const PRODUCT = 'Vexora External + Bypass';
 const STATUS_INTERVAL = 8000;
 
@@ -45,6 +46,7 @@ const TICKET_CATEGORIES = {
   support: { name: 'Support', prefix: 'support', categoryId: '1559570734664122488', emoji: '🎫', color: 0x3498db },
   purchase: { name: 'Purchase', prefix: 'purchase', categoryId: '1559570790398042133', emoji: '🛒', color: 0x00ff88 },
   bug: { name: 'Bug', prefix: 'bug', categoryId: '1559570848279429290', emoji: '⚠️', color: 0xff4444 },
+  notlegit: { name: 'Not Legit Proof', prefix: 'notlegit', categoryId: NOT_LEGIT_TICKET_CATEGORY_ID, emoji: '❌', color: 0xff4444 },
 };
 
 // ===== HTTP server + keep-alive =====
@@ -250,6 +252,7 @@ async function readGist() {
     giveaways: parsed.giveaways || {},
     laatsteGiveaways: parsed.laatsteGiveaways || {},
     bans: parsed.bans || [],
+    notlegitTickets: parsed.notlegitTickets || {},
   };
 }
 
@@ -385,14 +388,23 @@ async function saveLegitVotes(v) { const d = await readGist(); d.legitVotes = v;
 async function getLegitMessageId() { const d = await readGist(); return d.legitMessageId; }
 async function setLegitMessageId(id) { const d = await readGist(); d.legitMessageId = id; await writeGist(d); }
 
-function buildLegitEmbed(votes) {
+// confirmedRejects = lijst van userIds waarvan de reject bevestigd is als "Positive" (dus terechte klacht)
+async function getConfirmedRejects() { const d = await readGist(); return d.confirmedRejects || []; }
+async function saveConfirmedRejects(list) { const d = await readGist(); d.confirmedRejects = list; await writeGist(d); }
+
+function buildLegitEmbed(votes, confirmedRejects = []) {
+  const confirmedCount = confirmedRejects.length;
+  const unconfirmed = Math.max(0, votes.reject.length - confirmedCount);
   return new EmbedBuilder()
     .setTitle('Are we legit?')
     .setColor(0x00ff88)
     .setDescription(
       '**No without proof = ban**\n\n' +
       `> ✅ Legit — **${votes.approve.length}**\n` +
-      `> ❌ Not legit — **${votes.reject.length}**`
+      `> ❌ Not legit — **${votes.reject.length}**` +
+      (confirmedCount > 0 ? `\n> 🟢 Confirmed (with proof) — **${confirmedCount}**` : '') +
+      (unconfirmed > 0 ? `\n> ⏳ Pending review — **${unconfirmed}**` : '') +
+      `\n\n*Clicking ❌ Not legit opens a private ticket where you must upload proof.*`
     )
     .setThumbnail(LOGO)
     .setFooter({ text: 'Vexora.cc', iconURL: LOGO });
@@ -403,6 +415,21 @@ function buildLegitRow(votes) {
     new ButtonBuilder().setCustomId('legit_approve').setLabel(`✅ ${votes.approve.length}`).setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('legit_reject').setLabel(`❌ ${votes.reject.length}`).setStyle(ButtonStyle.Secondary)
   );
+}
+
+async function refreshLegitPoll() {
+  try {
+    const channel = await client.channels.fetch(LEGIT_CHANNEL_ID);
+    if (!channel) return;
+    const votes = await getLegitVotes();
+    const confirmed = await getConfirmedRejects();
+    const messageId = await getLegitMessageId();
+    if (!messageId) return;
+    const msg = await channel.messages.fetch(messageId).catch(() => null);
+    if (msg && msg.author.id === client.user.id) {
+      await msg.edit({ embeds: [buildLegitEmbed(votes, confirmed)], components: [buildLegitRow(votes)] });
+    }
+  } catch (e) { console.error('Could not refresh legit poll:', e.message); }
 }
 
 // ===== Vote log =====
@@ -973,7 +1000,8 @@ async function setupLegitPoll() {
     const channel = await client.channels.fetch(LEGIT_CHANNEL_ID);
     if (!channel) return;
     const votes = await getLegitVotes();
-    const embed = buildLegitEmbed(votes);
+    const confirmed = await getConfirmedRejects();
+    const embed = buildLegitEmbed(votes, confirmed);
     const row = buildLegitRow(votes);
     const messageId = await getLegitMessageId();
     if (messageId) {
@@ -1005,6 +1033,18 @@ async function removeTicket(channelId) {
   await saveTickets(t);
 }
 
+// ===== Not-legit ticket storage =====
+async function getNotLegitTickets() { const d = await readGist(); return d.notlegitTickets; }
+async function saveNotLegitTickets(n) { const d = await readGist(); d.notlegitTickets = n; await writeGist(d); }
+async function setNotLegitStatus(channelId, status) {
+  const n = await getNotLegitTickets();
+  if (n[channelId]) {
+    n[channelId].status = status;
+    n[channelId].updatedAt = Date.now();
+    await saveNotLegitTickets(n);
+  }
+}
+
 // ===== Helpers =====
 function stars(n) { return '⭐'.repeat(n) + '☆'.repeat(5 - n); }
 
@@ -1024,6 +1064,13 @@ function starRow(chosen) {
 function submitRow() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('submit').setLabel('Submit').setStyle(ButtonStyle.Primary)
+  );
+}
+
+function notLegitReviewRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('notlegit_positive').setLabel('Positive').setEmoji('✅').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('notlegit_false').setLabel('False').setEmoji('❌').setStyle(ButtonStyle.Danger)
   );
 }
 
@@ -1147,16 +1194,7 @@ client.on('interactionCreate', async (i) => {
       const toRemove = Math.min(amount, current);
       votes.reject.splice(current - toRemove, toRemove);
       await saveLegitVotes(votes);
-      try {
-        const channel = await client.channels.fetch(LEGIT_CHANNEL_ID);
-        const messageId = await getLegitMessageId();
-        if (messageId) {
-          const msg = await channel.messages.fetch(messageId);
-          if (msg && msg.author.id === client.user.id) {
-            await msg.edit({ embeds: [buildLegitEmbed(votes)], components: [buildLegitRow(votes)] });
-          }
-        }
-      } catch (e) {}
+      await refreshLegitPoll();
       try {
         const logChannel = await client.channels.fetch(VOTE_LOG_CHANNEL_ID);
         if (logChannel) {
@@ -1734,6 +1772,7 @@ client.on('interactionCreate', async (i) => {
 
   // Buttons
   if (i.isButton()) {
+    // ===== VERIFY =====
     if (i.customId === 'verify_button') {
       try {
         if (i.member.roles.cache.has(VERIFY_ROLE_ID)) return i.reply({ content: 'You are already verified.', ephemeral: true });
@@ -1743,22 +1782,220 @@ client.on('interactionCreate', async (i) => {
       return;
     }
 
-    if (i.customId === 'legit_approve' || i.customId === 'legit_reject') {
+    // ===== LEGIT POLL =====
+    if (i.customId === 'legit_approve') {
       try {
         const votes = await getLegitVotes();
         const userId = i.user.id;
         votes.approve = votes.approve.filter(id => id !== userId);
         votes.reject = votes.reject.filter(id => id !== userId);
-        const type = i.customId === 'legit_approve' ? 'approve' : 'reject';
-        if (type === 'approve') votes.approve.push(userId);
-        else votes.reject.push(userId);
+        votes.approve.push(userId);
+        // als user eerder een bevestigde reject had, haal die uit confirmedRejects
+        const confirmed = await getConfirmedRejects();
+        const newConfirmed = confirmed.filter(id => id !== userId);
+        if (newConfirmed.length !== confirmed.length) await saveConfirmedRejects(newConfirmed);
         await saveLegitVotes(votes);
-        await i.update({ embeds: [buildLegitEmbed(votes)], components: [buildLegitRow(votes)] });
-        await logVote(userId, type, '**Are we legit?**');
+        await refreshLegitPoll();
+        await i.reply({ content: '✅ Je stem is opgeslagen als **Legit**.', ephemeral: true });
+        await logVote(userId, 'approve', '**Are we legit?**');
       } catch (e) { await i.reply({ content: `Error: ${e.message}`, ephemeral: true }); }
       return;
     }
 
+    if (i.customId === 'legit_reject') {
+      try {
+        const guild = await client.guilds.fetch(GUILD_ID);
+        const tickets = await getTickets();
+
+        // Check of user al een open notlegit ticket heeft
+        const existingNotLegit = Object.entries(tickets).find(
+          ([_, t]) => t.userId === i.user.id && t.categorie === 'notlegit'
+        );
+        if (existingNotLegit) {
+          return i.reply({
+            content: `Je hebt al een open proof-ticket: <#${existingNotLegit[0]}>. Upload daar je bewijs.`,
+            ephemeral: true,
+          });
+        }
+
+        await i.deferReply({ ephemeral: true });
+
+        const votes = await getLegitVotes();
+        const userId = i.user.id;
+        votes.approve = votes.approve.filter(id => id !== userId);
+        votes.reject = votes.reject.filter(id => id !== userId);
+        votes.reject.push(userId);
+        await saveLegitVotes(votes);
+        await refreshLegitPoll();
+
+        // Maak ticket aan in de Not-Legit categorie
+        const cat = TICKET_CATEGORIES.notlegit;
+        const channelName = `notlegit-${i.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 90);
+        const ticketChannel = await guild.channels.create({
+          name: channelName,
+          type: ChannelType.GuildText,
+          parent: NOT_LEGIT_TICKET_CATEGORY_ID,
+          permissionOverwrites: [
+            { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+            { id: i.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles] },
+            { id: TICKET_SUPPORT_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages] },
+            { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ReadMessageHistory] },
+          ],
+          topic: `Not-Legit proof from ${i.user.tag}`,
+        });
+
+        await addTicket(ticketChannel.id, i.user.id, 'notlegit');
+
+        const notLegitStore = await getNotLegitTickets();
+        notLegitStore[ticketChannel.id] = {
+          userId: i.user.id,
+          status: 'pending',
+          createdAt: Date.now(),
+        };
+        await saveNotLegitTickets(notLegitStore);
+
+        const promptEmbed = new EmbedBuilder()
+          .setTitle('❌ Not Legit — Bewijs uploaden')
+          .setColor(0xff4444)
+          .setThumbnail(LOGO)
+          .setDescription(
+            `Beste <@${i.user.id}>,\n\n` +
+            `Je hebt op **Not Legit** gestemd. Dit ticket is aangemaakt zodat je je **bewijs** kan uploaden.\n\n` +
+            `📎 Upload hier je screenshots / video's / bestanden als bewijs.\n\n` +
+            `Ons team beoordeelt je bewijs en klikt daarna op:\n` +
+            `• **✅ Positive** — als je bewijs klopt (je stem wordt bevestigd, er komt een ✅ bij)\n` +
+            `• **❌ False** — als je bewijs niet klopt (je stem wordt ingetrokken)\n\n` +
+            `⚠️ **Geen bewijs = geen klacht = mogelijke ban.**`
+          )
+          .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+          .setTimestamp();
+
+        const closeRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setEmoji('🔒').setStyle(ButtonStyle.Danger)
+        );
+
+        await ticketChannel.send({
+          content: `<@${i.user.id}> <@&${TICKET_SUPPORT_ROLE_ID}>`,
+          embeds: [promptEmbed],
+          components: [notLegitReviewRow(), closeRow],
+        });
+
+        await i.editReply({ content: `✅ Ticket aangemaakt: <#${ticketChannel.id}> — upload daar je bewijs.` });
+        await logVote(userId, 'reject', `**Are we legit?** (proof ticket: <#${ticketChannel.id}>)`);
+      } catch (e) {
+        console.error('legit_reject error:', e);
+        try { await i.editReply({ content: `Error: ${e.message}` }); } catch (_) {}
+      }
+      return;
+    }
+
+    // ===== NOT-LEGIT REVIEW (Positive / False) =====
+    if (i.customId === 'notlegit_positive' || i.customId === 'notlegit_false') {
+      // Alleen staff
+      if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
+        return i.reply({ content: `Alleen staff met de <@&${TICKET_SUPPORT_ROLE_ID}> rol kan dit beoordelen.`, ephemeral: true });
+      }
+
+      await i.deferReply({ ephemeral: true });
+
+      const nlt = await getNotLegitTickets();
+      const entry = nlt[i.channelId];
+      const tickets = await getTickets();
+      const ticket = tickets[i.channelId];
+
+      if (!entry || !ticket || ticket.categorie !== 'notlegit') {
+        return i.editReply({ content: 'Dit is geen actief Not-Legit proof ticket.' });
+      }
+      if (entry.status !== 'pending') {
+        return i.editReply({ content: `Dit ticket is al beoordeeld als **${entry.status}**.` });
+      }
+
+      try {
+        const targetUserId = entry.userId;
+        const votes = await getLegitVotes();
+        const confirmed = await getConfirmedRejects();
+
+        if (i.customId === 'notlegit_positive') {
+          // Bewijs klopt → reject-stem blijft, markeer als bevestigd
+          if (!votes.reject.includes(targetUserId)) votes.reject.push(targetUserId);
+          if (!confirmed.includes(targetUserId)) confirmed.push(targetUserId);
+          await saveLegitVotes(votes);
+          await saveConfirmedRejects(confirmed);
+          await setNotLegitStatus(i.channelId, 'positive');
+
+          await refreshLegitPoll();
+
+          const embed = new EmbedBuilder()
+            .setTitle('✅ Beoordeeld: Positive')
+            .setColor(0x00ff88)
+            .setThumbnail(LOGO)
+            .setDescription(
+              `Het bewijs van <@${targetUserId}> is **geldig** bevonden.\n\n` +
+              `De ❌ stem is bevestigd en er is een ✅ bevestiging geplaatst op de legit-poll.\n\n` +
+              `Beoordeeld door: <@${i.user.id}>`
+            )
+            .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+            .setTimestamp();
+          await i.channel.send({ embeds: [embed] });
+
+          try {
+            const logChannel = await client.channels.fetch(VOTE_LOG_CHANNEL_ID);
+            if (logChannel) {
+              const logEmbed = new EmbedBuilder()
+                .setColor(0x00ff88)
+                .setDescription(`✅ **Not-Legit bevestigd** — <@${targetUserId}> (bewijs goedgekeurd door <@${i.user.id}>)\nTicket: #${i.channel.name}`)
+                .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+                .setTimestamp();
+              await logChannel.send({ embeds: [logEmbed] });
+            }
+          } catch (e) {}
+
+          await i.editReply({ content: '✅ Beoordeeld als **Positive**. De stem is bevestigd.' });
+        } else {
+          // False → reject intrekken
+          votes.reject = votes.reject.filter(id => id !== targetUserId);
+          const newConfirmed = confirmed.filter(id => id !== targetUserId);
+          await saveLegitVotes(votes);
+          await saveConfirmedRejects(newConfirmed);
+          await setNotLegitStatus(i.channelId, 'false');
+
+          await refreshLegitPoll();
+
+          const embed = new EmbedBuilder()
+            .setTitle('❌ Beoordeeld: False')
+            .setColor(0xff4444)
+            .setThumbnail(LOGO)
+            .setDescription(
+              `Het bewijs van <@${targetUserId}> is **niet geldig** bevonden.\n\n` +
+              `De ❌ stem is ingetrokken.\n\n` +
+              `Beoordeeld door: <@${i.user.id}>`
+            )
+            .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+            .setTimestamp();
+          await i.channel.send({ embeds: [embed] });
+
+          try {
+            const logChannel = await client.channels.fetch(VOTE_LOG_CHANNEL_ID);
+            if (logChannel) {
+              const logEmbed = new EmbedBuilder()
+                .setColor(0xff4444)
+                .setDescription(`❌ **Not-Legit afgekeurd** — <@${targetUserId}> (bewijs ongeldig bevonden door <@${i.user.id}>)\nTicket: #${i.channel.name}`)
+                .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
+                .setTimestamp();
+              await logChannel.send({ embeds: [logEmbed] });
+            }
+          } catch (e) {}
+
+          await i.editReply({ content: '❌ Beoordeeld als **False**. De stem is ingetrokken.' });
+        }
+      } catch (e) {
+        console.error('notlegit review error:', e);
+        try { await i.editReply({ content: `Error: ${e.message}` }); } catch (_) {}
+      }
+      return;
+    }
+
+    // ===== TICKET CLOSE =====
     if (i.customId === 'ticket_close') {
       try {
         const tickets = await getTickets();
@@ -1773,6 +2010,7 @@ client.on('interactionCreate', async (i) => {
       return;
     }
 
+    // ===== SUGGESTIONS =====
     if (i.customId.startsWith('suggest_approve_') || i.customId.startsWith('suggest_reject_')) {
       const messageId = i.customId.split('_').pop();
       if (!i.member.roles.cache.has(REQUIRED_ROLE_ID)) return i.reply({ content: `You need the <@&${REQUIRED_ROLE_ID}> role to vote.`, ephemeral: true });
@@ -1793,6 +2031,7 @@ client.on('interactionCreate', async (i) => {
       return;
     }
 
+    // ===== REVIEW STARS =====
     const review = reviews.get(i.user.id);
     if (!review) return i.reply({ content: 'This review has expired. Use /review again.', ephemeral: true });
 
@@ -1845,6 +2084,11 @@ client.on('channelDelete', async (channel) => {
     if (tickets[channel.id]) {
       delete tickets[channel.id];
       await saveTickets(tickets);
+    }
+    const nlt = await getNotLegitTickets();
+    if (nlt[channel.id]) {
+      delete nlt[channel.id];
+      await saveNotLegitTickets(nlt);
     }
   } catch (e) {}
 });
