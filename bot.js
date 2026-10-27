@@ -33,14 +33,14 @@ const LEGIT_CHANNEL_ID = '1564632244235014315';
 const TICKET_PANEL_CHANNEL_ID = '1564415332737884233';
 const LOG_CHANNEL_ID = '1555729409535774833'; 
 const TICKET_TRANSCRIPT_CHANNEL_ID = '1564415332737884234';
-const VOTE_LOG_CHANNEL_ID = '1555729409535774833';
 
 // Rollen
 const VERIFIED_ROLE_ID = '1564415134171013154';
 const STAFF_ROLE_IDS = [
   '1564419989002256516',
   '1564415131054772295',
-  '1564415129955729418'
+  '1564415129955729418',
+  '1564638227204149258' // Nieuwe staff rol
 ];
 
 // Ticket Categories
@@ -203,21 +203,13 @@ async function sendLog(title, description, color = 0x5865f2, fields = []) {
 }
 
 // ===== STATUS SYSTEEM =====
-let statusToggle = false;
-
 function updateBotStatus() {
   try {
     const guild = client.guilds.cache.first();
     if (!guild) return;
 
-    if (statusToggle) {
-      client.user.setActivity(`${guild.memberCount} Discord Members`, { type: 3 }); 
-    } else {
-      const verifiedRole = guild.roles.cache.get(VERIFIED_ROLE_ID);
-      const verifiedCount = verifiedRole ? verifiedRole.members.size : 0;
-      client.user.setActivity(`${verifiedCount} Verified Members`, { type: 3 }); 
-    }
-    statusToggle = !statusToggle;
+    // Alleen Discord Members nog
+    client.user.setActivity(`${guild.memberCount} Discord Members`, { type: 3 }); 
   } catch (error) {
     console.error("Failed to update status:", error);
   }
@@ -255,7 +247,10 @@ function buildLegitRow(votes) {
 async function setupLegit() {
   try {
     const channel = await client.channels.fetch(LEGIT_CHANNEL_ID).catch(() => null);
-    if (!channel) return console.error(`Legit channel (${LEGIT_CHANNEL_ID}) not found.`);
+    if (!channel) {
+      console.error(`Legit channel (${LEGIT_CHANNEL_ID}) not found. Check if the bot has access to this channel.`);
+      return;
+    }
 
     const votes = await getLegitVotes();
     const confirmed = await getConfirmedRejects();
@@ -271,11 +266,10 @@ async function setupLegit() {
           console.log('✅ Legit poll updated');
           return;
         }
-      } catch (e) {}
+      } catch (e) {
+        console.log('Previous legit message not found, sending new one...');
+      }
     }
-
-    const fetched = await channel.messages.fetch({ limit: 50 });
-    for (const m of fetched.filter(m => m.author.id === client.user.id).values()) await m.delete().catch(() => {});
 
     const newMsg = await channel.send({ embeds: [embed], components: [row] });
     await setLegitMessageId(newMsg.id);
@@ -299,14 +293,12 @@ async function updateVerifyMessage(channel, messageId) {
       .setDescription(`Welcome to Prestige. Please read the rules carefully before placing an order.\n\n${RULES_TEXT}`)
       .setFooter({ text: FOOTER_TEXT, iconURL: LOGO })
       .setThumbnail(LOGO)
-      .addFields({ name: '✅ Verified Members', value: `**${verifiedCount}**`, inline: false })
       .setTimestamp();
 
     const newRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('verify_accept_rules')
-        .setLabel('Accept Rules')
-        .setEmoji('✅')
+        .setLabel(`✅ ${verifiedCount}`)
         .setStyle(ButtonStyle.Secondary)
     );
 
@@ -334,14 +326,12 @@ async function setupVerify() {
       .setDescription(`Welcome to Prestige. Please read the rules carefully before placing an order.\n\n${RULES_TEXT}`)
       .setFooter({ text: FOOTER_TEXT, iconURL: LOGO })
       .setThumbnail(LOGO)
-      .addFields({ name: '✅ Verified Members', value: `**${verifiedCount}**`, inline: false })
       .setTimestamp();
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('verify_accept_rules')
-        .setLabel('Accept Rules')
-        .setEmoji('✅')
+        .setLabel(`✅ ${verifiedCount}`)
         .setStyle(ButtonStyle.Secondary)
     );
 
@@ -577,7 +567,6 @@ client.on('interactionCreate', async (i) => {
       try {
         await i.channel.setParent(newCategory.id, { lockPermissions: false });
         
-        // Zoek de bijbehorende categorie-key als die bestaat
         let newCatKey = null;
         for (const [key, cat] of Object.entries(TICKET_CATEGORIES)) {
           if (cat.categoryId === newCategory.id) {
