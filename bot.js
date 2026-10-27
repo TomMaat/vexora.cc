@@ -208,7 +208,7 @@ function updateBotStatus() {
     const guild = client.guilds.cache.first();
     if (!guild) return;
     
-    // Status toont nu alleen Discord Members
+    // Status toont alleen Discord Members
     client.user.setActivity(`${guild.memberCount} Discord Members`, { type: 3 }); 
   } catch (error) {
     console.error("Failed to update status:", error);
@@ -248,8 +248,9 @@ async function setupLegit() {
   try {
     const channel = await client.channels.fetch(LEGIT_CHANNEL_ID).catch(() => null);
     
-    if (!channel) {
-      console.error(`❌ Legit channel (${LEGIT_CHANNEL_ID}) not found or no access. Controleer of het ID klopt.`);
+    // Fix: Check of kanaal bestaat EN of het een tekstkanaal is
+    if (!channel || !channel.isTextBased()) {
+      console.error(`❌ Legit channel (${LEGIT_CHANNEL_ID}) not found, is not a text channel, or no access. Controleer of je een tekstkanaal ID hebt gebruikt (geen categorie!).`);
       return;
     }
 
