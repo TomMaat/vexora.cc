@@ -40,7 +40,7 @@ const STAFF_ROLE_IDS = [
   '1564419989002256516',
   '1564415131054772295',
   '1564415129955729418',
-  '1564638227204149258' // Nieuwe staff rol
+  '1564638227204149258'
 ];
 
 // Ticket Categories
@@ -207,8 +207,8 @@ function updateBotStatus() {
   try {
     const guild = client.guilds.cache.first();
     if (!guild) return;
-
-    // Alleen Discord Members nog
+    
+    // Status toont nu alleen Discord Members
     client.user.setActivity(`${guild.memberCount} Discord Members`, { type: 3 }); 
   } catch (error) {
     console.error("Failed to update status:", error);
@@ -247,8 +247,9 @@ function buildLegitRow(votes) {
 async function setupLegit() {
   try {
     const channel = await client.channels.fetch(LEGIT_CHANNEL_ID).catch(() => null);
+    
     if (!channel) {
-      console.error(`Legit channel (${LEGIT_CHANNEL_ID}) not found. Check if the bot has access to this channel.`);
+      console.error(`❌ Legit channel (${LEGIT_CHANNEL_ID}) not found or no access. Controleer of het ID klopt.`);
       return;
     }
 
@@ -266,15 +267,15 @@ async function setupLegit() {
           console.log('✅ Legit poll updated');
           return;
         }
-      } catch (e) {
-        console.log('Previous legit message not found, sending new one...');
-      }
+      } catch (e) {}
     }
 
     const newMsg = await channel.send({ embeds: [embed], components: [row] });
     await setLegitMessageId(newMsg.id);
     console.log('✅ Legit poll placed');
-  } catch (e) { console.error('Legit setup error:', e.message); }
+  } catch (e) { 
+    console.error('Legit setup error:', e.message); 
+  }
 }
 
 // ===== VERIFY SYSTEEM =====
@@ -284,7 +285,7 @@ async function updateVerifyMessage(channel, messageId) {
     const verifiedRole = guild.roles.cache.get(VERIFIED_ROLE_ID);
     const verifiedCount = verifiedRole ? verifiedRole.members.size : 0;
 
-    const msg = await channel.messages.fetch(messageId);
+    const msg = await channel.messages.fetch(messageId).catch(() => null);
     if (!msg) return;
 
     const newEmbed = new EmbedBuilder()
@@ -311,7 +312,7 @@ async function updateVerifyMessage(channel, messageId) {
 async function setupVerify() {
   try {
     const channel = await client.channels.fetch(VERIFY_CHANNEL_ID).catch(() => null);
-    if (!channel) return console.error(`Verify channel (${VERIFY_CHANNEL_ID}) not found.`);
+    if (!channel) return console.error(`❌ Verify channel (${VERIFY_CHANNEL_ID}) not found.`);
 
     const fetched = await channel.messages.fetch({ limit: 50 });
     for (const msg of fetched.filter(m => m.author.id === client.user.id).values()) await msg.delete().catch(() => {});
