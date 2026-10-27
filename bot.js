@@ -253,6 +253,7 @@ async function readGist() {
     laatsteGiveaways: parsed.laatsteGiveaways || {},
     bans: parsed.bans || [],
     notlegitTickets: parsed.notlegitTickets || {},
+    confirmedRejects: parsed.confirmedRejects || [],
   };
 }
 
@@ -388,13 +389,11 @@ async function saveLegitVotes(v) { const d = await readGist(); d.legitVotes = v;
 async function getLegitMessageId() { const d = await readGist(); return d.legitMessageId; }
 async function setLegitMessageId(id) { const d = await readGist(); d.legitMessageId = id; await writeGist(d); }
 
-// confirmedRejects = lijst van userIds waarvan de reject bevestigd is als "Positive" (dus terechte klacht)
 async function getConfirmedRejects() { const d = await readGist(); return d.confirmedRejects || []; }
 async function saveConfirmedRejects(list) { const d = await readGist(); d.confirmedRejects = list; await writeGist(d); }
 
 function buildLegitEmbed(votes, confirmedRejects = []) {
   const confirmedCount = confirmedRejects.length;
-  const unconfirmed = Math.max(0, votes.reject.length - confirmedCount);
   return new EmbedBuilder()
     .setTitle('Are we legit?')
     .setColor(0x00ff88)
@@ -403,7 +402,6 @@ function buildLegitEmbed(votes, confirmedRejects = []) {
       `> ✅ Legit — **${votes.approve.length}**\n` +
       `> ❌ Not legit — **${votes.reject.length}**` +
       (confirmedCount > 0 ? `\n> 🟢 Confirmed (with proof) — **${confirmedCount}**` : '') +
-      (unconfirmed > 0 ? `\n> ⏳ Pending review — **${unconfirmed}**` : '') +
       `\n\n*Clicking ❌ Not legit opens a private ticket where you must upload proof.*`
     )
     .setThumbnail(LOGO)
@@ -1790,13 +1788,12 @@ client.on('interactionCreate', async (i) => {
         votes.approve = votes.approve.filter(id => id !== userId);
         votes.reject = votes.reject.filter(id => id !== userId);
         votes.approve.push(userId);
-        // als user eerder een bevestigde reject had, haal die uit confirmedRejects
         const confirmed = await getConfirmedRejects();
         const newConfirmed = confirmed.filter(id => id !== userId);
         if (newConfirmed.length !== confirmed.length) await saveConfirmedRejects(newConfirmed);
         await saveLegitVotes(votes);
         await refreshLegitPoll();
-        await i.reply({ content: '✅ Je stem is opgeslagen als **Legit**.', ephemeral: true });
+        await i.reply({ content: '✅ Your vote has been saved as **Legit**.', ephemeral: true });
         await logVote(userId, 'approve', '**Are we legit?**');
       } catch (e) { await i.reply({ content: `Error: ${e.message}`, ephemeral: true }); }
       return;
@@ -1807,28 +1804,20 @@ client.on('interactionCreate', async (i) => {
         const guild = await client.guilds.fetch(GUILD_ID);
         const tickets = await getTickets();
 
-        // Check of user al een open notlegit ticket heeft
         const existingNotLegit = Object.entries(tickets).find(
           ([_, t]) => t.userId === i.user.id && t.categorie === 'notlegit'
         );
         if (existingNotLegit) {
           return i.reply({
-            content: `Je hebt al een open proof-ticket: <#${existingNotLegit[0]}>. Upload daar je bewijs.`,
+            content: `You already have an open proof ticket: <#${existingNotLegit[0]}>. Upload your proof there.`,
             ephemeral: true,
           });
         }
 
         await i.deferReply({ ephemeral: true });
 
-        const votes = await getLegitVotes();
-        const userId = i.user.id;
-        votes.approve = votes.approve.filter(id => id !== userId);
-        votes.reject = votes.reject.filter(id => id !== userId);
-        votes.reject.push(userId);
-        await saveLegitVotes(votes);
-        await refreshLegitPoll();
+        // ⚠️ GEEN stemregistratie hier — pas na Positive door staff.
 
-        // Maak ticket aan in de Not-Legit categorie
         const cat = TICKET_CATEGORIES.notlegit;
         const channelName = `notlegit-${i.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 90);
         const ticketChannel = await guild.channels.create({
@@ -1854,18 +1843,14 @@ client.on('interactionCreate', async (i) => {
         };
         await saveNotLegitTickets(notLegitStore);
 
+        // Korte, duidelijke Engelse tekst
         const promptEmbed = new EmbedBuilder()
-          .setTitle('❌ Not Legit — Bewijs uploaden')
+          .setTitle('Upload proof')
           .setColor(0xff4444)
           .setThumbnail(LOGO)
           .setDescription(
-            `Beste <@${i.user.id}>,\n\n` +
-            `Je hebt op **Not Legit** gestemd. Dit ticket is aangemaakt zodat je je **bewijs** kan uploaden.\n\n` +
-            `📎 Upload hier je screenshots / video's / bestanden als bewijs.\n\n` +
-            `Ons team beoordeelt je bewijs en klikt daarna op:\n` +
-            `• **✅ Positive** — als je bewijs klopt (je stem wordt bevestigd, er komt een ✅ bij)\n` +
-            `• **❌ False** — als je bewijs niet klopt (je stem wordt ingetrokken)\n\n` +
-            `⚠️ **Geen bewijs = geen klacht = mogelijke ban.**`
+            `Please upload your proof here (screenshots, video, files).\n\n` +
+            `Staff will review it and click **Positive** or **False**.`
           )
           .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
           .setTimestamp();
@@ -1880,8 +1865,7 @@ client.on('interactionCreate', async (i) => {
           components: [notLegitReviewRow(), closeRow],
         });
 
-        await i.editReply({ content: `✅ Ticket aangemaakt: <#${ticketChannel.id}> — upload daar je bewijs.` });
-        await logVote(userId, 'reject', `**Are we legit?** (proof ticket: <#${ticketChannel.id}>)`);
+        await i.editReply({ content: `✅ Ticket created: <#${ticketChannel.id}> — upload your proof there.` });
       } catch (e) {
         console.error('legit_reject error:', e);
         try { await i.editReply({ content: `Error: ${e.message}` }); } catch (_) {}
@@ -1891,9 +1875,8 @@ client.on('interactionCreate', async (i) => {
 
     // ===== NOT-LEGIT REVIEW (Positive / False) =====
     if (i.customId === 'notlegit_positive' || i.customId === 'notlegit_false') {
-      // Alleen staff
       if (!i.member.roles.cache.has(TICKET_SUPPORT_ROLE_ID)) {
-        return i.reply({ content: `Alleen staff met de <@&${TICKET_SUPPORT_ROLE_ID}> rol kan dit beoordelen.`, ephemeral: true });
+        return i.reply({ content: `Only staff with the <@&${TICKET_SUPPORT_ROLE_ID}> role can review this.`, ephemeral: true });
       }
 
       await i.deferReply({ ephemeral: true });
@@ -1904,10 +1887,10 @@ client.on('interactionCreate', async (i) => {
       const ticket = tickets[i.channelId];
 
       if (!entry || !ticket || ticket.categorie !== 'notlegit') {
-        return i.editReply({ content: 'Dit is geen actief Not-Legit proof ticket.' });
+        return i.editReply({ content: 'This is not an active Not-Legit proof ticket.' });
       }
       if (entry.status !== 'pending') {
-        return i.editReply({ content: `Dit ticket is al beoordeeld als **${entry.status}**.` });
+        return i.editReply({ content: `This ticket has already been reviewed as **${entry.status}**.` });
       }
 
       try {
@@ -1916,7 +1899,7 @@ client.on('interactionCreate', async (i) => {
         const confirmed = await getConfirmedRejects();
 
         if (i.customId === 'notlegit_positive') {
-          // Bewijs klopt → reject-stem blijft, markeer als bevestigd
+          // ✅ PAS NU de ❌-stem toevoegen + bevestigen
           if (!votes.reject.includes(targetUserId)) votes.reject.push(targetUserId);
           if (!confirmed.includes(targetUserId)) confirmed.push(targetUserId);
           await saveLegitVotes(votes);
@@ -1926,13 +1909,13 @@ client.on('interactionCreate', async (i) => {
           await refreshLegitPoll();
 
           const embed = new EmbedBuilder()
-            .setTitle('✅ Beoordeeld: Positive')
+            .setTitle('✅ Reviewed: Positive')
             .setColor(0x00ff88)
             .setThumbnail(LOGO)
             .setDescription(
-              `Het bewijs van <@${targetUserId}> is **geldig** bevonden.\n\n` +
-              `De ❌ stem is bevestigd en er is een ✅ bevestiging geplaatst op de legit-poll.\n\n` +
-              `Beoordeeld door: <@${i.user.id}>`
+              `Proof from <@${targetUserId}> is **valid**.\n\n` +
+              `The ❌ vote has been added and confirmed on the legit poll.\n\n` +
+              `Reviewed by: <@${i.user.id}>`
             )
             .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
             .setTimestamp();
@@ -1943,32 +1926,26 @@ client.on('interactionCreate', async (i) => {
             if (logChannel) {
               const logEmbed = new EmbedBuilder()
                 .setColor(0x00ff88)
-                .setDescription(`✅ **Not-Legit bevestigd** — <@${targetUserId}> (bewijs goedgekeurd door <@${i.user.id}>)\nTicket: #${i.channel.name}`)
+                .setDescription(`✅ **Not-Legit confirmed** — <@${targetUserId}> (proof approved by <@${i.user.id}>)\nTicket: #${i.channel.name}`)
                 .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
                 .setTimestamp();
               await logChannel.send({ embeds: [logEmbed] });
             }
           } catch (e) {}
 
-          await i.editReply({ content: '✅ Beoordeeld als **Positive**. De stem is bevestigd.' });
+          await i.editReply({ content: '✅ Reviewed as **Positive**. The vote has been added and confirmed.' });
         } else {
-          // False → reject intrekken
-          votes.reject = votes.reject.filter(id => id !== targetUserId);
-          const newConfirmed = confirmed.filter(id => id !== targetUserId);
-          await saveLegitVotes(votes);
-          await saveConfirmedRejects(newConfirmed);
+          // ❌ False → er was nog geen stem, dus niets aan de teller veranderen
           await setNotLegitStatus(i.channelId, 'false');
 
-          await refreshLegitPoll();
-
           const embed = new EmbedBuilder()
-            .setTitle('❌ Beoordeeld: False')
+            .setTitle('❌ Reviewed: False')
             .setColor(0xff4444)
             .setThumbnail(LOGO)
             .setDescription(
-              `Het bewijs van <@${targetUserId}> is **niet geldig** bevonden.\n\n` +
-              `De ❌ stem is ingetrokken.\n\n` +
-              `Beoordeeld door: <@${i.user.id}>`
+              `Proof from <@${targetUserId}> is **not valid**.\n\n` +
+              `No vote has been added to the legit poll.\n\n` +
+              `Reviewed by: <@${i.user.id}>`
             )
             .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
             .setTimestamp();
@@ -1979,14 +1956,14 @@ client.on('interactionCreate', async (i) => {
             if (logChannel) {
               const logEmbed = new EmbedBuilder()
                 .setColor(0xff4444)
-                .setDescription(`❌ **Not-Legit afgekeurd** — <@${targetUserId}> (bewijs ongeldig bevonden door <@${i.user.id}>)\nTicket: #${i.channel.name}`)
+                .setDescription(`❌ **Not-Legit rejected** — <@${targetUserId}> (proof rejected by <@${i.user.id}>)\nTicket: #${i.channel.name}`)
                 .setFooter({ text: 'Vexora.cc', iconURL: LOGO })
                 .setTimestamp();
               await logChannel.send({ embeds: [logEmbed] });
             }
           } catch (e) {}
 
-          await i.editReply({ content: '❌ Beoordeeld als **False**. De stem is ingetrokken.' });
+          await i.editReply({ content: '❌ Reviewed as **False**. No vote was added.' });
         }
       } catch (e) {
         console.error('notlegit review error:', e);
